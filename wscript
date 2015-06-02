@@ -40,7 +40,6 @@ def set_options(opt):
     opt.RECURSE('lib/ntdb')
     opt.RECURSE('selftest')
     opt.RECURSE('source4/lib/tls')
-    opt.RECURSE('pidl')
     opt.RECURSE('source3')
     opt.RECURSE('lib/util')
     opt.RECURSE('ctdb')
@@ -69,6 +68,14 @@ def set_options(opt):
     opt.add_option('--without-relro',
                   help=("Disable RELRO builds"),
                   action="store_false", dest='enable_relro')
+
+    opt.add_option('--with-systemd',
+                   help=("Enable systemd integration"),
+                   action='store_true', dest='enable_systemd')
+
+    opt.add_option('--without-systemd',
+                   help=("Disable systemd integration"),
+                   action='store_false', dest='enable_systemd')
 
     gr = opt.option_group('developer options')
 
@@ -155,7 +162,6 @@ def configure(conf):
     conf.RECURSE('lib/subunit/c')
     conf.RECURSE('libcli/smbreadline')
     conf.RECURSE('lib/crypto')
-    conf.RECURSE('pidl')
     conf.RECURSE('selftest')
     conf.RECURSE('source3')
     conf.RECURSE('lib/texpect')
@@ -205,6 +211,20 @@ def configure(conf):
         if conf.check_cc(cflags='', ldflags='-Wl,-z,relro,-z,now', mandatory=need_relro,
                          msg="Checking compiler for full RELRO support"):
             conf.env['ENABLE_RELRO'] = True
+
+    if Options.options.enable_systemd != False:
+        conf.check_cfg(package='libsystemd-daemon', args='--cflags --libs',
+                       msg='Checking for libsystemd-daemon', uselib_store="SYSTEMD-DAEMON")
+        conf.CHECK_HEADERS('systemd/sd-daemon.h', lib='systemd-daemon')
+        conf.CHECK_LIB('systemd-daemon', shlib=True)
+
+    if (conf.CONFIG_SET('HAVE_SYSTEMD_SD_DAEMON_H') and
+        conf.CONFIG_SET('HAVE_LIBSYSTEMD_DAEMON')):
+        conf.DEFINE('HAVE_SYSTEMD', '1')
+        conf.env['ENABLE_SYSTEMD'] = True
+    else:
+        conf.SET_TARGET_TYPE('systemd-daemon', 'EMPTY')
+        conf.undefine('HAVE_SYSTEMD')
 
     conf.SAMBA_CONFIG_H('include/config.h')
 

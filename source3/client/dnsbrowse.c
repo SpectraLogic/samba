@@ -91,7 +91,7 @@ static void do_smb_resolve(struct mdns_smbsrv_result *browsesrv)
 		}
 	}
 
-	TALLOC_FREE(fdset);
+	TALLOC_FREE(ctx);
 	DNSServiceRefDeallocate(mdns_conn_sdref);
 }
 

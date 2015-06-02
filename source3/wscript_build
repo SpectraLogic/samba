@@ -615,6 +615,8 @@ bld.SAMBA3_LIBRARY('smbd_base',
                    NDR_SMB_ACL
                    netapi
                    NDR_IOCTL
+                   inotify
+                   dns_sd
                    ''' + bld.env['dmapi_lib'],
                    private_library=True)
 
@@ -1042,6 +1044,7 @@ bld.SAMBA3_BINARY('client/smbclient',
                  libsmb
                  msrpc3
                  RPC_NDR_SRVSVC
+                 dns_sd
                  cli_smb_common
                  ''' + bld.env['archive_lib'])
 
@@ -1317,7 +1320,7 @@ bld.SAMBA3_BINARY('msg_source',
                  install=False)
 
 bld.SAMBA3_BINARY('smbcacls',
-                 source='utils/smbcacls.c lib/util_sd.c',
+                 source='utils/smbcacls.c',
                  deps='''
                  talloc
                  popt_samba3
@@ -1342,11 +1345,9 @@ bld.SAMBA3_BINARY('eventlogadm',
                  LIBEVENTLOG''')
 
 bld.SAMBA3_BINARY('sharesec',
-                 source='utils/sharesec.c lib/util_sd.c',
+                 source='utils/sharesec.c',
                  deps='''
                  talloc
-                 msrpc3
-                 libcli_lsa3
                  popt_samba3''')
 
 bld.SAMBA3_BINARY('pdbtest',
@@ -1459,7 +1460,7 @@ bld.SAMBA3_PYTHON('pysmbd',
 
 bld.SAMBA3_PYTHON('pylibsmb',
                   source='libsmb/pylibsmb.c',
-                  deps='smbclient samba-credentials',
+                  deps='smbclient samba-credentials libsmb errors',
                   realname='samba/samba3/libsmb_samba_internal.so'
                   )
 
