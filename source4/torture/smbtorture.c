@@ -542,6 +542,13 @@ int main(int argc, const char *argv[])
 		lpcfg_set_cmdline(cmdline_lp_ctx, "torture:rewind_support", "false");
 		lpcfg_set_cmdline(cmdline_lp_ctx, "torture:raw_search_search", "false");
 		lpcfg_set_cmdline(cmdline_lp_ctx, "torture:search_ea_size", "false");
+	} else if (strcmp(target, "likewise") == 0) {
+		lpcfg_set_cmdline(cmdline_lp_ctx, "torture:likewise", "true");
+		lpcfg_set_cmdline(cmdline_lp_ctx, "torture:cn_max_buffer_size",
+			"0x00010000");
+		lpcfg_set_cmdline(cmdline_lp_ctx, "torture:fs_min_alloc_size",
+			"0x200");
+		torture_samba_create_time = false;
 	}
 
 	if (max_runtime) {

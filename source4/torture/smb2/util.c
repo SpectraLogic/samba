@@ -32,6 +32,7 @@
 #include "lib/util/tevent_ntstatus.h"
 
 #include "torture/torture.h"
+#include "torture/smbtorture.h"
 #include "torture/smb2/proto.h"
 
 
@@ -136,7 +137,7 @@ static NTSTATUS smb2_create_complex(struct smb2_tree *tree, const char *fname,
 		
 	}
 
-#define CHECK_TIME(field) do {\
+#define CHECK_TIME(field, set_error) do {\
 	if (setfile.basic_info.in.field != fileinfo.all_info2.out.field) { \
 		printf("(%s) " #field " not setup correctly: %s(%llu) => %s(%llu)\n", \
 			__location__, \
@@ -144,14 +145,23 @@ static NTSTATUS smb2_create_complex(struct smb2_tree *tree, const char *fname,
 			(unsigned long long)setfile.basic_info.in.field, \
 			nt_time_string(tree, fileinfo.basic_info.out.field), \
 			(unsigned long long)fileinfo.basic_info.out.field); \
-		status = NT_STATUS_INVALID_PARAMETER; \
+		if (set_error) \
+			status = NT_STATUS_INVALID_PARAMETER; \
 	} \
 } while (0)
 
-	CHECK_TIME(create_time);
-	CHECK_TIME(access_time);
-	CHECK_TIME(write_time);
-	CHECK_TIME(change_time);
+	/* Likewise and Samba disagree on the POSIX to SMB interpretation
+	 * of create_time and change_time:
+	 *			Samba		Likewise	
+	 *	create_time:	st_ctime	st_mtime
+	 *	change_time:	st_mtime	st_ctime
+	 *
+	 * If testing against Likewise do not error on these diferences.  
+	 */
+	CHECK_TIME(create_time, torture_samba_create_time);
+	CHECK_TIME(access_time, true);
+	CHECK_TIME(write_time,  true);
+	CHECK_TIME(change_time, torture_samba_create_time);
 
 	return status;
 }

@@ -32,6 +32,7 @@ extern int torture_seed;
 extern int torture_numops;
 extern int torture_failures;
 extern int torture_numasync;
+extern bool torture_samba_create_time;
 
 struct torture_test;
 int torture_init(void);
@@ -149,4 +150,10 @@ bool torture_parse_target(struct loadparm_context *lp_ctx, const char *target);
  * the appropriate test.
  */
 
+/* torture:fs_min_alloc_size
+ *
+ * Server's minimum underlying phyical filesystem allocation size.
+ * This value represents the minimum allocation size of a zero length file 
+ * on the server; ZFS for example reports 512 bytes.
+ */
 #endif /* __SMBTORTURE_H__ */

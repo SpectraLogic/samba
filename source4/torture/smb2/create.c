@@ -137,6 +137,9 @@ static bool test_create_gentest(struct torture_context *tctx, struct smb2_tree *
 	uint32_t ok_mask, not_supported_mask, invalid_parameter_mask;
 	uint32_t not_a_directory_mask, unexpected_mask;
 	union smb_fileinfo q;
+	int err_cnt = 0;
+
+	smb2_deltree(tree, FNAME);
 
 	ZERO_STRUCT(io);
 	io.in.desired_access     = SEC_FLAG_MAXIMUM_ALLOWED;
@@ -166,12 +169,10 @@ static bool test_create_gentest(struct torture_context *tctx, struct smb2_tree *
 	CHECK_STATUS(status, NT_STATUS_INVALID_PARAMETER);
 
 	io.in.file_attributes = FILE_ATTRIBUTE_VOLUME;
-	status = smb2_create(tree, tctx, &io);
 	CHECK_STATUS(status, NT_STATUS_INVALID_PARAMETER);
 
 	io.in.create_disposition = NTCREATEX_DISP_OPEN;
 	io.in.file_attributes = FILE_ATTRIBUTE_VOLUME;
-	status = smb2_create(tree, tctx, &io);
 	CHECK_STATUS(status, NT_STATUS_INVALID_PARAMETER);
 	
 	io.in.create_disposition = NTCREATEX_DISP_CREATE;
@@ -248,8 +249,20 @@ static bool test_create_gentest(struct torture_context *tctx, struct smb2_tree *
 		CHECK_EQUAL(access_mask, 0x0de0fe00);
 	} else if (torture_setting_bool(tctx, "samba4", false)) {
 		CHECK_EQUAL(access_mask, 0x0cf0fe00);
+	} else if (torture_setting_bool(tctx, "likewise", false)) {
+		uint32_t lw_access_mask = 0x0df0fe00;
+
+		lw_access_mask &= ~SEC_STD_SYNCHRONIZE;
+		torture_warning(tctx, 
+			"LIKEWISE: SEC_STD_SYNCHRONIZE not supported");
+		CHECK_EQUAL(access_mask, lw_access_mask);
 	} else {
+#define WIN2K8R2 1
+#ifdef WIN2K8R2
+		CHECK_EQUAL(access_mask, 0x0de0fe00);
+#else
 		CHECK_EQUAL(access_mask, 0x0df0fe00);
+#endif
 	}
 
 	io.in.create_disposition = NTCREATEX_DISP_OPEN_IF;
@@ -272,9 +285,17 @@ static bool test_create_gentest(struct torture_context *tctx, struct smb2_tree *
 				invalid_parameter_mask |= 1<<i;
 			} else if (NT_STATUS_IS_OK(status)) {
 				uint32_t expected;
-				ok_mask |= 1<<i;
+				uint32_t expected_mask;
 
-				expected = (io.in.file_attributes | FILE_ATTRIBUTE_ARCHIVE) & 0x00005127;
+				ok_mask |= 1<<i;
+				expected_mask = 0x00005127;
+        			if (torture_setting_bool(tctx, "likewise", false)) {
+					/* temporary not supported */
+					torture_warning(tctx, 
+						"LIKEWISE: temporary not supported");
+					expected_mask &= ~ FILE_ATTRIBUTE_TEMPORARY;
+				}
+				expected = (io.in.file_attributes | FILE_ATTRIBUTE_ARCHIVE) & expected_mask;
 				io.out.file_attr &= ~FILE_ATTRIBUTE_NONINDEXED;
 				CHECK_EQUAL(io.out.file_attr, expected);
 				file_attributes_set |= io.out.file_attr;
@@ -290,10 +311,24 @@ static bool test_create_gentest(struct torture_context *tctx, struct smb2_tree *
 		}
 	}
 
-	CHECK_EQUAL(ok_mask,                0x00003fb7);
-	CHECK_EQUAL(invalid_parameter_mask, 0xffff8048);
-	CHECK_EQUAL(unexpected_mask,        0x00000000);
-	CHECK_EQUAL(file_attributes_set,    0x00001127);
+	{
+		uint32_t expected_ok_mask =                0x00003fb7;
+		uint32_t expected_invalid_parameter_mask = 0xffff8048;
+		uint32_t expected_unexpected_mask =        0x00000000;
+		uint32_t expected_file_attributes_set =    0x00001127;
+
+ 		if (torture_setting_bool(tctx, "likewise", false)) {
+			/* LW does not support temporary; this behavior is
+			 * consistent with LW's handling of compressed 
+			 */
+			torture_warning(tctx, "LIKEWISE: temporary not supported");
+			expected_file_attributes_set &= ~FILE_ATTRIBUTE_TEMPORARY;
+		}
+		CHECK_EQUAL(ok_mask,                expected_ok_mask);
+		CHECK_EQUAL(invalid_parameter_mask, expected_invalid_parameter_mask);
+		CHECK_EQUAL(unexpected_mask,        expected_unexpected_mask);
+		CHECK_EQUAL(file_attributes_set,    expected_file_attributes_set);
+	}
 
 	smb2_deltree(tree, FNAME);
 
@@ -308,7 +343,11 @@ static bool test_create_gentest(struct torture_context *tctx, struct smb2_tree *
 		    nt_errstr(status));
 	} else {
 		CHECK_STATUS(status, NT_STATUS_OK);
-		CHECK_EQUAL(io.out.file_attr, (FILE_ATTRIBUTE_ENCRYPTED | FILE_ATTRIBUTE_ARCHIVE));
+ 		if (!torture_setting_bool(tctx, "likewise", false))
+			CHECK_EQUAL(io.out.file_attr, (FILE_ATTRIBUTE_ENCRYPTED | FILE_ATTRIBUTE_ARCHIVE));
+		else
+			torture_warning(tctx, "LIKEWISE: FILE_ATTRIBUTE_ENCRYPTED not supported");
+		
 		status = smb2_util_close(tree, io.out.file.handle);
 		CHECK_STATUS(status, NT_STATUS_OK);
 	}
@@ -343,7 +382,19 @@ static bool test_create_gentest(struct torture_context *tctx, struct smb2_tree *
 	io.in.query_maximal_access = true;
 	status = smb2_create(tree, tctx, &io);
 	CHECK_STATUS(status, NT_STATUS_OK);
-	CHECK_EQUAL(io.out.maximal_access, 0x001f01ff);
+
+	access_mask = 0x001f01ff;
+	if (torture_setting_bool(tctx, "likewise", false)) {
+		/* SEC_FLAG_SYSTEM_SECURITY is dependent on the
+		 * user; domain admin will have this bit set.
+		 */
+		if (io.out.maximal_access & SEC_FLAG_SYSTEM_SECURITY) {
+			torture_warning(tctx, 
+				"LIKEWISE: SEC_FLAG_SYSTEM_SECURITY set");
+			access_mask |= SEC_FLAG_SYSTEM_SECURITY;
+		}
+	}
+	CHECK_EQUAL(io.out.maximal_access, access_mask);
 
 	q.access_information.level = RAW_FILEINFO_ACCESS_INFORMATION;
 	q.access_information.in.file.handle = io.out.file.handle;
@@ -357,7 +408,7 @@ static bool test_create_gentest(struct torture_context *tctx, struct smb2_tree *
 	io.in.share_access = 0;
 	status = smb2_create(tree, tctx, &io);
 	CHECK_STATUS(status, NT_STATUS_ACCESS_DENIED);
-	
+
 	smb2_deltree(tree, FNAME);
 
 	return true;
@@ -398,7 +449,8 @@ static bool test_create_blob(struct torture_context *tctx, struct smb2_tree *tre
 	/* FIXME We use 1M cause that's the rounded size of Samba.
 	 * We should ask the server for the cluser size and calulate it
 	 * correctly. */
-	io.in.alloc_size = 0x00100000;
+	io.in.alloc_size = torture_setting_ulong(tctx, "fs_min_alloc_size", 0);
+		
 	status = smb2_create(tree, tctx, &io);
 	CHECK_STATUS(status, NT_STATUS_OK);
 	CHECK_EQUAL(io.out.alloc_size, io.in.alloc_size);

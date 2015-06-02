@@ -28,14 +28,17 @@
 #include "torture/smb2/proto.h"
 #include "torture/util.h"
 
-static struct {
+struct file_level {
 	const char *name;
 	uint16_t level;
 	NTSTATUS fstatus;
 	NTSTATUS dstatus;
 	union smb_fileinfo finfo;
 	union smb_fileinfo dinfo;
-} file_levels[] = {
+};
+
+
+static struct file_level file_levels[] = {
 #define LEVEL(x) #x, x
  { LEVEL(RAW_FILEINFO_BASIC_INFORMATION) },
  { LEVEL(RAW_FILEINFO_STANDARD_INFORMATION) },
@@ -58,12 +61,14 @@ static struct {
  { LEVEL(RAW_FILEINFO_SEC_DESC) }
 };
 
-static struct {
+struct fs_level {
 	const char *name;
 	uint16_t level;
 	NTSTATUS status;
 	union smb_fsinfo info;
-} fs_levels[] = {
+};
+
+static struct fs_level fs_levels[] = {
  { LEVEL(RAW_QFS_VOLUME_INFORMATION) },
  { LEVEL(RAW_QFS_SIZE_INFORMATION) },
  { LEVEL(RAW_QFS_DEVICE_INFORMATION) },
@@ -75,6 +80,105 @@ static struct {
 
 #define FNAME "testsmb2_file.dat"
 #define DNAME "testsmb2_dir"
+
+static bool
+torture_likewise_smb2_quirk_verify(struct torture_context *tctx,
+		const char *func, const char *tname, 
+		NTSTATUS recvd_status, NTSTATUS quirk_status)
+{
+	/* This is NOT quirk if the caller set the quirk status to
+	 * success; in this case, return false - not a likewise quirk
+	 */
+	if (NT_STATUS_V(quirk_status) == NT_STATUS_V(NT_STATUS_OK))
+		return false;
+
+ 	/* Return true if the test failed, but quirk was correctly satisfied.
+	 */
+	if (NT_STATUS_V(recvd_status) != NT_STATUS_V(NT_STATUS_OK)) {
+			
+		torture_warning(tctx,  "LIKEWISE: "
+			"%s:: %s expected %s, received %s, quirk allowed %s",
+			func, tname, 
+			nt_errstr(NT_STATUS_OK), nt_errstr(recvd_status),
+			nt_errstr(quirk_status));
+
+		torture_assert_ntstatus_equal(tctx,  
+			quirk_status, recvd_status,
+			"SMB_LIKEWISE quirk violated");
+
+		return true;
+	}
+
+	/* Otherwise, return false - quirk failed */
+	return false;
+}
+
+static bool 
+torture_smb2_fsinfo_quirks(struct torture_context *tctx,
+				    struct fs_level *fsl)
+{
+	NTSTATUS quirk_status = NT_STATUS_OK;
+
+
+	if (torture_setting_bool(tctx, "likewise", false)) {
+		/* For a known Likewise test failure set the quirk_status to the
+		 * known failure value.
+		 */
+		switch (fsl->level) {
+
+		case RAW_QFS_DEVICE_INFORMATION:
+		case RAW_QFS_OBJECTID_INFORMATION:
+			quirk_status = NT_STATUS_NOT_SUPPORTED;
+			break;
+	
+	
+		case RAW_FILEINFO_ATTRIBUTE_TAG_INFORMATION:
+			quirk_status = NT_STATUS_NOT_IMPLEMENTED;
+			break;
+
+		}
+		return torture_likewise_smb2_quirk_verify(tctx, 
+			__FUNCTION__, fsl->name, fsl->status, quirk_status);
+	}
+
+	/* not a quirk */
+	return false;
+
+}
+
+static bool 
+torture_smb2_fileinfo_quirks(struct torture_context *tctx,
+				    struct file_level *fl)
+{
+	NTSTATUS quirk_status = NT_STATUS_OK;
+
+
+	if (torture_setting_bool(tctx, "likewise", false)) {
+		/* For a known Likewise test failure set the quirk_status to the
+		 * known failure value.
+		 */
+		switch (fl->level) {
+
+		case RAW_FILEINFO_COMPRESSION_INFORMATION:
+		case RAW_FILEINFO_SMB2_ALL_EAS:
+			quirk_status = NT_STATUS_NOT_SUPPORTED;
+			break;
+
+		case RAW_FILEINFO_ALIGNMENT_INFORMATION:
+		case RAW_FILEINFO_ALT_NAME_INFORMATION:
+		case RAW_FILEINFO_ATTRIBUTE_TAG_INFORMATION:
+			quirk_status = NT_STATUS_NOT_IMPLEMENTED;
+			break;
+
+		}
+		return torture_likewise_smb2_quirk_verify(tctx, __FUNCTION__,
+			fl->name, fl->fstatus, quirk_status);
+	}
+
+	/* not a quirk */
+	return false;
+}
+
 
 /*
   test fileinfo levels
@@ -111,17 +215,21 @@ static bool torture_smb2_fileinfo(struct torture_context *tctx, struct smb2_tree
 		file_levels[i].finfo.generic.level = file_levels[i].level;
 		file_levels[i].finfo.generic.in.file.handle = hfile;
 		file_levels[i].fstatus = smb2_getinfo_file(tree, tree, &file_levels[i].finfo);
-		torture_assert_ntstatus_ok(tctx, file_levels[i].fstatus,
+
+		if ( ! torture_smb2_fileinfo_quirks(tctx, &file_levels[i])) {
+			torture_assert_ntstatus_ok(tctx, file_levels[i].fstatus,
 					   talloc_asprintf(tctx, "%s on file",
 							   file_levels[i].name));
+		}
 		file_levels[i].dinfo.generic.level = file_levels[i].level;
 		file_levels[i].dinfo.generic.in.file.handle = hdir;
 		file_levels[i].dstatus = smb2_getinfo_file(tree, tree, &file_levels[i].dinfo);
-		torture_assert_ntstatus_ok(tctx, file_levels[i].dstatus,
+		if ( ! torture_smb2_fileinfo_quirks(tctx, &file_levels[i])) {
+			torture_assert_ntstatus_ok(tctx, file_levels[i].dstatus,
 					   talloc_asprintf(tctx, "%s on dir",
 							   file_levels[i].name));
+		}
 	}
-
 	return true;
 }
 

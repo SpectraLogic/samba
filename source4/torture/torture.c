@@ -30,6 +30,7 @@ _PUBLIC_ int torture_entries=1000;
 _PUBLIC_ int torture_failures=1;
 _PUBLIC_ int torture_seed=0;
 _PUBLIC_ int torture_numasync=100;
+_PUBLIC_ bool torture_samba_create_time=true;
 
 struct torture_suite *torture_root = NULL;
 

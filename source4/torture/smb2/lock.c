@@ -24,6 +24,8 @@
 #include "libcli/smb2/smb2_calls.h"
 #include "../libcli/smb/smbXcli_base.h"
 
+#include "../libcli/smb/smbXcli_base.h"
+
 #include "torture/torture.h"
 #include "torture/smb2/proto.h"
 #include "torture/util.h"
@@ -247,10 +249,13 @@ static bool test_valid_request(struct torture_context *torture,
 	el[0].flags		= SMB2_LOCK_FLAG_UNLOCK |
 				  SMB2_LOCK_FLAG_FAIL_IMMEDIATELY;
 	status = smb2_lock(tree, &lck);
-	if (TARGET_IS_W2K8(torture)) {
+	if (TARGET_IS_W2K8(torture) ||
+	    torture_setting_bool(torture, "likewise", false)) {
 		CHECK_STATUS(status, NT_STATUS_RANGE_NOT_LOCKED);
 		torture_warning(torture, "Target has bug validating lock flags "
 					 "parameter.\n");
+		torture_warning(torture, 
+			"LIKEWISE: validating lock flags \"bug\" too");
 	} else {
 		CHECK_STATUS(status, NT_STATUS_INVALID_PARAMETER);
 	}
@@ -1158,7 +1163,37 @@ static bool test_cancel_logoff(struct torture_context *torture,
 	 *  seems to check the file id before the others).
 	 */
 	if (!NT_STATUS_EQUAL(status, NT_STATUS_USER_SESSION_DELETED)) {
-		CHECK_STATUS(status, NT_STATUS_FILE_CLOSED);
+
+		if (torture_setting_bool(torture, "likewise", false) &&
+                    smb2cli_session_get_should_sign(tree->session->smbXcli)) {
+
+			/* The session has been deleted; likewise, in a 
+			 * seemingly MS-SMB2 compliant fashion, has deleted all
+			 * data associated with the session including the signing
+			 * keys. If signing is required then this presents 
+			 * two problems:
+			 * 
+			 * 1.) Since the session has been deleted the
+			 *     received NT_STATUS_USER_SESSION_DELETED
+			 *     reply to the above smb2_lock() request
+			 *     is rejected by smb2cli_conn_dispatch_incoming()
+			 *     with an error of NT_STATUS_ACCESS_DENIED 
+			 *     because the SMB2 reply is not signed.
+			 *
+			 * 2.) The NT_STATUS_ACCESS_DENIED does not appear
+			 *     to be readily pushed back into the event 
+			 *     mechanism, thus this test appears to hang.
+			 *     An event timeout eventually returns
+			 *     NT_STATUS_ACCESS_DENIED.
+			 */
+			torture_warning(torture, 
+			"LIKEWISE: logoff session signing quirk "
+			"... waiting for timeout");
+			CHECK_STATUS(status, NT_STATUS_ACCESS_DENIED);
+		}
+		else {
+			CHECK_STATUS(status, NT_STATUS_FILE_CLOSED);
+		}
 	}
 
 done:

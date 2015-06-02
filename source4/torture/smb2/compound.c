@@ -353,6 +353,10 @@ static bool test_compound_related2(struct torture_context *tctx,
 	status = smb2_close_recv(req[4], &cl);
 	CHECK_STATUS(status, NT_STATUS_FILE_CLOSED);
 
+	req[1] = smb2_close_send(tree, &cl);
+	status = smb2_close_recv(req[1], &cl);
+	CHECK_STATUS(status, NT_STATUS_OK);
+
 	TALLOC_FREE(tree->smbXcli);
 	tree->smbXcli = saved_tcon;
 	TALLOC_FREE(tree->session->smbXcli);
@@ -421,7 +425,12 @@ static bool test_compound_related3(struct torture_context *tctx,
 	status = smb2_create_recv(req[0], tree, &cr);
 	CHECK_STATUS(status, NT_STATUS_OK);
 	status = smb2_ioctl_recv(req[1], tree, &io);
-	CHECK_STATUS(status, NT_STATUS_OK);
+    	if (torture_setting_bool(tctx, "likewise", false)) {
+		torture_warning(tctx, "LIKEWISE: FSCTL_CREATE_OR_GET_OBJECT_ID not supported");
+		CHECK_STATUS(status, NT_STATUS_INVALID_DEVICE_REQUEST);
+	}
+	else
+		CHECK_STATUS(status, NT_STATUS_OK);
 	status = smb2_close_recv(req[2], &cl);
 	CHECK_STATUS(status, NT_STATUS_OK);
 
@@ -431,6 +440,215 @@ static bool test_compound_related3(struct torture_context *tctx,
 	ret = true;
 done:
 	return ret;
+}
+
+static bool test_compound_related4(struct torture_context *tctx,
+				   struct smb2_tree *tree)
+{
+	struct smb2_handle hd;
+	struct smb2_create cr;
+	NTSTATUS status;
+	const char *fname = "compound_related4.dat";
+	struct smb2_close cl;
+	bool ret = true;
+	struct smb2_request *req[3];
+	struct smbXcli_tcon *saved_tcon = tree->smbXcli;
+	struct smbXcli_session *saved_session = tree->session->smbXcli;
+	struct smb2_read io;
+	uint8_t buf[16384];
+	TALLOC_CTX *tmp_ctx = talloc_new(tree);
+
+
+	smb2_transport_credits_ask_num(tree->session->transport, 3);
+	smb2_util_unlink(tree, fname);
+
+        memset(buf, 0xff, ARRAY_SIZE(buf));
+	status = torture_smb2_testfile(tree, fname, &hd);
+        CHECK_STATUS(status, NT_STATUS_OK);
+	status = smb2_util_write(tree, hd, buf, 0, ARRAY_SIZE(buf));
+	CHECK_STATUS(status, NT_STATUS_OK);
+	smb2_util_close(tree, hd);
+
+	ZERO_STRUCT(cr);
+	cr.in.security_flags		= 0x00;
+	cr.in.oplock_level		= 0;
+	cr.in.impersonation_level	= NTCREATEX_IMPERSONATION_IMPERSONATION;
+	cr.in.create_flags		= 0x00000000;
+	cr.in.reserved			= 0x00000000;
+	cr.in.desired_access		= SEC_RIGHTS_FILE_ALL;
+	cr.in.file_attributes		= FILE_ATTRIBUTE_NORMAL;
+	cr.in.share_access		= NTCREATEX_SHARE_ACCESS_READ |
+					  NTCREATEX_SHARE_ACCESS_WRITE |
+					  NTCREATEX_SHARE_ACCESS_DELETE;
+	cr.in.create_disposition	= NTCREATEX_DISP_OPEN_IF;
+	cr.in.create_options		= NTCREATEX_OPTIONS_SEQUENTIAL_ONLY |
+					  NTCREATEX_OPTIONS_ASYNC_ALERT	|
+					  NTCREATEX_OPTIONS_NON_DIRECTORY_FILE |
+					  0x00200000;
+	cr.in.fname			= fname;
+
+	smb2_transport_compound_start(tree->session->transport, 3);
+
+	req[0] = smb2_create_send(tree, &cr);
+
+	smb2_transport_compound_set_related(tree->session->transport, true);
+
+	hd.data[0] = 0xdeadbeef00000000UL;
+	hd.data[1] = 0x00000000b00bfaceUL;
+
+	ZERO_STRUCT(cl);
+	cl.in.file.handle = hd;
+
+	tree->smbXcli = smbXcli_tcon_create(tree);
+	smb2cli_tcon_set_values(tree->smbXcli,
+				NULL, /* session */
+				0xabcdef00, /* tcon_id */
+				0, /* type */
+				0, /* flags */
+				0, /* capabilities */
+				0 /* maximal_access */);
+
+	tree->session->smbXcli = smbXcli_session_copy(tree->session,
+							tree->session->smbXcli);
+	smb2cli_session_set_id_and_flags(tree->session->smbXcli, UINT64_MAX, 0);
+
+	ZERO_STRUCT(io);
+	io.in.file.handle = hd;
+	io.in.length = ARRAY_SIZE(buf); 
+	req[1] = smb2_read_send(tree, &io);
+
+	req[2] = smb2_close_send(tree, &cl);
+
+	status = smb2_create_recv(req[0], tree, &cr);
+	CHECK_STATUS(status, NT_STATUS_OK);
+
+	status = smb2_read_recv(req[1], tmp_ctx, &io);
+	CHECK_STATUS(status, NT_STATUS_OK);
+
+	status = smb2_close_recv(req[2], &cl);
+	CHECK_STATUS(status, NT_STATUS_OK);
+
+	smb2_util_unlink(tree, fname);
+	TALLOC_FREE(tree->smbXcli);
+	TALLOC_FREE(tmp_ctx);
+	tree->smbXcli = saved_tcon;
+	TALLOC_FREE(tree->session->smbXcli);
+	tree->session->smbXcli = saved_session;
+
+done:
+	return ret;
+
+}
+
+static bool test_compound_related5(struct torture_context *tctx,
+				   struct smb2_tree *tree)
+{
+	struct smb2_handle hd;
+	struct smb2_create cr;
+	NTSTATUS status;
+	const char *fname = "compound_related4.dat";
+	struct smb2_close cl;
+	bool ret = true;
+	struct smb2_request *req[6];
+	struct smbXcli_tcon *saved_tcon = tree->smbXcli;
+	struct smbXcli_session *saved_session = tree->session->smbXcli;
+	struct smb2_read io;
+	uint8_t buf[16384];
+	TALLOC_CTX *tmp_ctx = talloc_new(tree);
+
+
+	smb2_transport_credits_ask_num(tree->session->transport, 3);
+	smb2_util_unlink(tree, fname);
+
+        memset(buf, 0xff, ARRAY_SIZE(buf));
+	status = torture_smb2_testfile(tree, fname, &hd);
+        CHECK_STATUS(status, NT_STATUS_OK);
+	status = smb2_util_write(tree, hd, buf, 0, ARRAY_SIZE(buf));
+	CHECK_STATUS(status, NT_STATUS_OK);
+	smb2_util_close(tree, hd);
+
+	ZERO_STRUCT(cr);
+	cr.in.security_flags		= 0x00;
+	cr.in.oplock_level		= 0;
+	cr.in.impersonation_level	= NTCREATEX_IMPERSONATION_IMPERSONATION;
+	cr.in.create_flags		= 0x00000000;
+	cr.in.reserved			= 0x00000000;
+	cr.in.desired_access		= SEC_RIGHTS_FILE_ALL;
+	cr.in.file_attributes		= FILE_ATTRIBUTE_NORMAL;
+	cr.in.share_access		= NTCREATEX_SHARE_ACCESS_READ |
+					  NTCREATEX_SHARE_ACCESS_WRITE |
+					  NTCREATEX_SHARE_ACCESS_DELETE;
+	cr.in.create_disposition	= NTCREATEX_DISP_OPEN_IF;
+	cr.in.create_options		= NTCREATEX_OPTIONS_SEQUENTIAL_ONLY |
+					  NTCREATEX_OPTIONS_ASYNC_ALERT	|
+					  NTCREATEX_OPTIONS_NON_DIRECTORY_FILE |
+					  0x00200000;
+	cr.in.fname			= fname;
+
+	smb2_transport_compound_start(tree->session->transport, 6);
+
+	req[0] = smb2_create_send(tree, &cr);
+
+	smb2_transport_compound_set_related(tree->session->transport, true);
+
+	hd.data[0] = 0xdeadbeef00000000UL;
+	hd.data[1] = 0x00000000b00bfaceUL;
+
+	ZERO_STRUCT(cl);
+	cl.in.file.handle = hd;
+
+	tree->smbXcli = smbXcli_tcon_create(tree);
+	smb2cli_tcon_set_values(tree->smbXcli,
+				NULL, /* session */
+				0xabcdef00, /* tcon_id */
+				0, /* type */
+				0, /* flags */
+				0, /* capabilities */
+				0 /* maximal_access */);
+
+	tree->session->smbXcli = smbXcli_session_copy(tree->session,
+						tree->session->smbXcli);
+	smb2cli_session_set_id_and_flags(tree->session->smbXcli, UINT64_MAX, 0);
+
+	ZERO_STRUCT(io);
+	io.in.file.handle = hd;
+	io.in.length = ARRAY_SIZE(buf); 
+
+	req[1] = smb2_read_send(tree, &io);
+	req[2] = smb2_logoff_send(tree->session);
+	req[3] = smb2_read_send(tree, &io);
+	req[4] = smb2_read_send(tree, &io);
+	req[5] = smb2_close_send(tree, &cl);
+
+	status = smb2_create_recv(req[0], tree, &cr);
+	CHECK_STATUS(status, NT_STATUS_OK);
+
+	status = smb2_read_recv(req[1], tmp_ctx, &io);
+	CHECK_STATUS(status, NT_STATUS_OK);
+
+	/* Log off and the remainder should fail */
+	status = smb2_logoff_recv(req[2]);
+	CHECK_STATUS(status, NT_STATUS_OK);
+
+	status = smb2_read_recv(req[3], tmp_ctx, &io);
+	CHECK_STATUS(status, NT_STATUS_USER_SESSION_DELETED);
+
+	status = smb2_read_recv(req[4], tmp_ctx, &io);
+	CHECK_STATUS(status, NT_STATUS_USER_SESSION_DELETED);
+
+	status = smb2_close_recv(req[5], &cl);
+	CHECK_STATUS(status, NT_STATUS_USER_SESSION_DELETED);
+
+	smb2_util_unlink(tree, fname);
+	TALLOC_FREE(tree->smbXcli);
+	TALLOC_FREE(tmp_ctx);
+	tree->smbXcli = saved_tcon;
+	TALLOC_FREE(tree->session->smbXcli);
+	tree->session->smbXcli = saved_session;
+
+done:
+	return ret;
+
 }
 
 static bool test_compound_unrelated1(struct torture_context *tctx,
@@ -853,7 +1071,14 @@ static bool test_compound_interim2(struct torture_context *tctx,
     CHECK_STATUS(status, NT_STATUS_OK);
 
     status = smb2_notify_recv(req[1], tree, &nt);
-    CHECK_STATUS(status, NT_STATUS_INTERNAL_ERROR);
+    if (torture_setting_bool(tctx, "likewise", false)) {
+	torture_warning(tctx, 
+		"LIKEWISE: returns NT_STATUS_INSUFFICIENT_RESOURCES");
+    	CHECK_STATUS(status, NT_STATUS_INSUFFICIENT_RESOURCES);
+    }
+    else
+    	CHECK_STATUS(status, NT_STATUS_INTERNAL_ERROR);
+
 
     status = smb2_getinfo_recv(req[2], tree, &gf);
     CHECK_STATUS(status, NT_STATUS_OK);
@@ -873,6 +1098,10 @@ struct torture_suite *torture_smb2_compound_init(void)
 	torture_suite_add_1smb2_test(suite, "related2", test_compound_related2);
 	torture_suite_add_1smb2_test(suite, "related3",
 				     test_compound_related3);
+	torture_suite_add_1smb2_test(suite, "related4",
+				     test_compound_related4);
+	torture_suite_add_1smb2_test(suite, "related5",
+				     test_compound_related5);
 	torture_suite_add_1smb2_test(suite, "unrelated1", test_compound_unrelated1);
 	torture_suite_add_1smb2_test(suite, "invalid1", test_compound_invalid1);
 	torture_suite_add_1smb2_test(suite, "invalid2", test_compound_invalid2);

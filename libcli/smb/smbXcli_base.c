@@ -5077,6 +5077,21 @@ void smb2cli_session_stop_replay(struct smbXcli_session *session)
 	session->smb2->replay_active = false;
 }
 
+NTSTATUS smb2cli_session_set_should_sign(struct smbXcli_session *session,
+					 bool should_sign)
+{
+	if (should_sign && session->smb2->signing_key.data == NULL) {
+		return NT_STATUS_INVALID_PARAMETER;
+	}
+	session->smb2->should_sign = should_sign;
+	return NT_STATUS_OK;
+}
+
+bool smb2cli_session_get_should_sign(struct smbXcli_session *session)
+{
+	return session->smb2->should_sign;
+}
+
 NTSTATUS smb2cli_session_set_session_key(struct smbXcli_session *session,
 					 const DATA_BLOB _session_key,
 					 const struct iovec *recv_iov)

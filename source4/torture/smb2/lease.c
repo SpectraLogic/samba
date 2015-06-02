@@ -48,7 +48,6 @@
 #define CHECK_CREATED(__io, __created, __attribute)			\
 	do {								\
 		CHECK_VAL((__io)->out.create_action, NTCREATEX_ACTION_ ## __created); \
-		CHECK_VAL((__io)->out.alloc_size, 0);			\
 		CHECK_VAL((__io)->out.size, 0);				\
 		CHECK_VAL((__io)->out.file_attr, (__attribute));	\
 		CHECK_VAL((__io)->out.reserved2, 0);			\
@@ -381,6 +380,79 @@ static bool test_lease_upgrade2(struct torture_context *tctx,
 	return ret;
 }
 
+/**
+ * mutliopen test.
+ * full matrix of lease types to open multiple times
+ */
+struct lease_multiopen_test {
+	const char *initial;
+	const char *expected;
+};
+
+struct lease_multiopen_test lease_multiopen_tests[] = {
+	{ "", "" },
+
+	{ "R", "R" },
+
+	{ "RH", "RH" },
+
+	{ "RW", "RW" },
+
+	{ "RWH", "RWH" }
+};
+#define NUM_MULTIOPEN_TESTS \
+	(sizeof(lease_multiopen_tests) / sizeof(*lease_multiopen_tests))
+#define NUM_CONCURRENT_OPENS 20
+
+static bool test_lease_multiopen(struct torture_context *tctx,
+                                 struct smb2_tree *tree)
+{
+	TALLOC_CTX *mem_ctx = talloc_new(tctx);
+	struct smb2_handle h[NUM_CONCURRENT_OPENS];
+	NTSTATUS status;
+	struct smb2_create io;
+	struct smb2_lease ls;
+	const char *fname = "lease.dat";
+	bool ret = true;
+	int i, j;
+	uint32_t caps;
+
+	caps = smb2cli_conn_server_capabilities(tree->session->transport->conn);
+	if (!(caps & SMB2_CAP_LEASING)) {
+		torture_skip(tctx, "leases are not supported");
+	}
+
+	for (i = 0; i < NUM_MULTIOPEN_TESTS; i++) {
+		struct lease_multiopen_test t = lease_multiopen_tests[i];
+
+		smb2_util_unlink(tree, fname);
+
+		for (j = 0; j < NUM_CONCURRENT_OPENS; j++) {
+			smb2_lease_create(&io, &ls, false, fname, LEASE1, smb2_util_lease_state(t.initial));
+			status = smb2_create(tree, mem_ctx, &io);
+			CHECK_STATUS(status, NT_STATUS_OK);
+			if (j == 0)
+				CHECK_CREATED(&io, CREATED, FILE_ATTRIBUTE_ARCHIVE);
+			else
+				CHECK_CREATED(&io, EXISTED, FILE_ATTRIBUTE_ARCHIVE);
+			CHECK_LEASE(&io, t.initial, true, LEASE1);
+			h[j] = io.out.file.handle;
+		}
+
+		for (j = 0; j < NUM_CONCURRENT_OPENS; j++)
+			smb2_util_close(tree, h[j]);
+	}
+
+ done:
+	for (j = 0; j < NUM_CONCURRENT_OPENS; j++)
+		smb2_util_close(tree, h[j]);
+
+	smb2_util_unlink(tree, fname);
+
+	talloc_free(mem_ctx);
+
+	return ret;
+}
 
 #define CHECK_LEASE_BREAK(__lb, __oldstate, __state, __key)		\
 	do {								\

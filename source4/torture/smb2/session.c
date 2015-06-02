@@ -30,6 +30,9 @@
 #include "libcli/security/security.h"
 #include "libcli/resolve/resolve.h"
 #include "lib/param/param.h"
+#include "auth/gensec/gensec.h"
+
+
 
 #define CHECK_VAL(v, correct) do { \
 	if ((v) != (correct)) { \
@@ -46,15 +49,60 @@
 		goto done; \
 	}} while (0)
 
-#define CHECK_CREATED(__io, __created, __attribute)			\
+#define CHECK_CREATED(__io, __created, __attribute, __minalloc)		\
 	do {								\
 		CHECK_VAL((__io)->out.create_action, NTCREATEX_ACTION_ ## __created); \
-		CHECK_VAL((__io)->out.alloc_size, 0);			\
+		CHECK_VAL((__io)->out.alloc_size, (__minalloc));	\
 		CHECK_VAL((__io)->out.size, 0);				\
 		CHECK_VAL((__io)->out.file_attr, (__attribute));	\
 		CHECK_VAL((__io)->out.reserved2, 0);			\
 	} while(0)
 
+
+static
+struct cli_credentials *
+test_session_other_user(
+	struct torture_context *tctx, 
+	struct smb2_tree *tree,
+	TALLOC_CTX *mem_ctx)
+{
+	struct cli_credentials *creds = NULL;
+	static char user_passwd[128];
+	static const char *user;
+	static char *passwd;
+	uint32_t gensec_features = 0;
+
+
+	if ((user = torture_setting_string(tctx, "extra_user1", NULL)) == NULL) {
+		torture_warning(tctx, "Failed to get extra user name\n");
+		return NULL;
+	} 
+
+	strncpy(user_passwd, user, sizeof(user_passwd));
+	if ((passwd = strchr(user_passwd, '%')) == NULL) {
+		torture_warning(tctx, "Failed to get password from extra user %s\n", user);
+		return NULL;
+	}
+	*passwd = '\0';
+	passwd++;
+	user = user_passwd;
+	torture_comment(tctx, "extra user %s, passwd %s\n", user, passwd);
+
+        creds = cli_credentials_init(tctx);
+	torture_assert(tctx, (creds != NULL), "talloc error");
+        cli_credentials_set_conf(creds, tctx->lp_ctx);
+        cli_credentials_set_domain(creds, 
+		cli_credentials_get_domain(cmdline_credentials), CRED_SPECIFIED);
+	
+        cli_credentials_set_username(creds, user, CRED_SPECIFIED);
+        cli_credentials_set_password(creds, passwd, CRED_SPECIFIED);
+
+        gensec_features = cli_credentials_get_gensec_features(cmdline_credentials);
+        gensec_features |= GENSEC_FEATURE_SIGN;
+        cli_credentials_set_gensec_features(creds, gensec_features);
+
+	return creds;
+}
 
 /**
  * basic test for doing a session reconnect
@@ -62,6 +110,7 @@
 bool test_session_reconnect1(struct torture_context *tctx, struct smb2_tree *tree)
 {
 	NTSTATUS status;
+	bool ret = true;
 	TALLOC_CTX *mem_ctx = talloc_new(tctx);
 	char fname[256];
 	struct smb2_handle _h1;
@@ -69,10 +118,10 @@ bool test_session_reconnect1(struct torture_context *tctx, struct smb2_tree *tre
 	struct smb2_handle _h2;
 	struct smb2_handle *h2 = NULL;
 	struct smb2_create io1, io2;
-	uint64_t previous_session_id;
-	bool ret = true;
-	struct smb2_tree *tree2;
+	struct smb2_tree *tree2 = NULL;
+	struct smb2_tree *tree3 = NULL;
 	union smb_fileinfo qfinfo;
+	uint64_t previous_session_id;
 
 	/* Add some random component to the file name. */
 	snprintf(fname, sizeof(fname), "session_reconnect_%s.dat",
@@ -88,7 +137,8 @@ bool test_session_reconnect1(struct torture_context *tctx, struct smb2_tree *tre
 	CHECK_STATUS(status, NT_STATUS_OK);
 	_h1 = io1.out.file.handle;
 	h1 = &_h1;
-	CHECK_CREATED(&io1, CREATED, FILE_ATTRIBUTE_ARCHIVE);
+	CHECK_CREATED(&io1, CREATED, FILE_ATTRIBUTE_ARCHIVE,
+	   torture_setting_ulong(tctx, "fs_min_alloc_size", 0));
 	CHECK_VAL(io1.out.oplock_level, smb2_util_oplock_level("b"));
 
 	/* disconnect, reconnect and then do durable reopen */
@@ -109,7 +159,19 @@ bool test_session_reconnect1(struct torture_context *tctx, struct smb2_tree *tre
 	qfinfo.generic.level = RAW_FILEINFO_POSITION_INFORMATION;
 	qfinfo.generic.in.file.handle = _h1;
 	status = smb2_getinfo_file(tree, mem_ctx, &qfinfo);
-	CHECK_STATUS(status, NT_STATUS_USER_SESSION_DELETED);
+	
+	if (smb2cli_session_get_should_sign(tree->session->smbXcli)) {
+		/* If signing is enabled then the 
+		 * NT_STATUS_USER_SESSION_DELETED response from the
+		 * server is never processed because; the packet
+		 * is rejected by libcli because it is not signed.
+		 * It can not be signed because the server has
+		 * deleted the session.
+		 */
+		CHECK_STATUS(status, NT_STATUS_ACCESS_DENIED);
+	} else {
+		CHECK_STATUS(status, NT_STATUS_USER_SESSION_DELETED);
+	}
 	h1 = NULL;
 
 	smb2_oplock_create_share(&io2, fname,
@@ -118,10 +180,28 @@ bool test_session_reconnect1(struct torture_context *tctx, struct smb2_tree *tre
 
 	status = smb2_create(tree2, mem_ctx, &io2);
 	CHECK_STATUS(status, NT_STATUS_OK);
-	CHECK_CREATED(&io2, EXISTED, FILE_ATTRIBUTE_ARCHIVE);
+	CHECK_CREATED(&io2, EXISTED, FILE_ATTRIBUTE_ARCHIVE,
+	   torture_setting_ulong(tctx, "fs_min_alloc_size", 0));
 	CHECK_VAL(io2.out.oplock_level, smb2_util_oplock_level("b"));
 	_h2 = io2.out.file.handle;
 	h2 = &_h2;
+
+	/* Connect again without specifying the previous sesion ID; 
+	 * the second session should still be valid after this
+	 * operation.
+	 */
+	if (!torture_smb2_connection_ext(tctx, 0, &tree3)) {
+		torture_warning(tctx, "session connect again failed\n");
+		ret = false;
+		goto done;
+	}
+
+	/* try to access the file via the second handle */
+	ZERO_STRUCT(qfinfo);
+	qfinfo.generic.level = RAW_FILEINFO_POSITION_INFORMATION;
+	qfinfo.generic.in.file.handle = _h2;
+	status = smb2_getinfo_file(tree2, mem_ctx, &qfinfo);
+	CHECK_STATUS(status, NT_STATUS_OK);
 
 done:
 	if (h1 != NULL) {
@@ -131,10 +211,16 @@ done:
 		smb2_util_close(tree2, *h2);
 	}
 
-	smb2_util_unlink(tree2, fname);
+	if (tree2 != NULL) {
+		smb2_util_unlink(tree2, fname);
+	}
+	if (tree3 != NULL) {
+		smb2_util_unlink(tree3, fname);
+	}
 
 	talloc_free(tree);
 	talloc_free(tree2);
+	talloc_free(tree3);
 
 	talloc_free(mem_ctx);
 
@@ -151,7 +237,7 @@ bool test_session_reconnect2(struct torture_context *tctx, struct smb2_tree *tre
 	char fname[256];
 	struct smb2_handle _h1;
 	struct smb2_handle *h1 = NULL;
-	struct smb2_create io1;
+	struct smb2_create io1; 
 	uint64_t previous_session_id;
 	bool ret = true;
 	struct smb2_session *session2;
@@ -172,7 +258,8 @@ bool test_session_reconnect2(struct torture_context *tctx, struct smb2_tree *tre
 	CHECK_STATUS(status, NT_STATUS_OK);
 	_h1 = io1.out.file.handle;
 	h1 = &_h1;
-	CHECK_CREATED(&io1, CREATED, FILE_ATTRIBUTE_ARCHIVE);
+	CHECK_CREATED(&io1, CREATED, FILE_ATTRIBUTE_ARCHIVE,
+	   torture_setting_ulong(tctx, "fs_min_alloc_size", 0));
 	CHECK_VAL(io1.out.oplock_level, smb2_util_oplock_level("b"));
 
 	/* disconnect, reconnect and then do durable reopen */
@@ -188,7 +275,18 @@ bool test_session_reconnect2(struct torture_context *tctx, struct smb2_tree *tre
 	qfinfo.generic.level = RAW_FILEINFO_POSITION_INFORMATION;
 	qfinfo.generic.in.file.handle = _h1;
 	status = smb2_getinfo_file(tree, mem_ctx, &qfinfo);
-	CHECK_STATUS(status, NT_STATUS_USER_SESSION_DELETED);
+	if (smb2cli_session_get_should_sign(tree->session->smbXcli)) {
+		/* If signing is enabled then the 
+		 * NT_STATUS_USER_SESSION_DELETED response from the
+		 * server is never processed; the packet
+		 * is rejected by libcli because it is not signed.
+		 * It can not be signed because the server has
+		 * deleted the session.
+		 */
+		CHECK_STATUS(status, NT_STATUS_ACCESS_DENIED);
+	} else {
+		CHECK_STATUS(status, NT_STATUS_USER_SESSION_DELETED);
+	}
 	h1 = NULL;
 
 done:
@@ -229,7 +327,8 @@ bool test_session_reauth1(struct torture_context *tctx, struct smb2_tree *tree)
 	CHECK_STATUS(status, NT_STATUS_OK);
 	_h1 = io1.out.file.handle;
 	h1 = &_h1;
-	CHECK_CREATED(&io1, CREATED, FILE_ATTRIBUTE_ARCHIVE);
+	CHECK_CREATED(&io1, CREATED, FILE_ATTRIBUTE_ARCHIVE,
+	   torture_setting_ulong(tctx, "fs_min_alloc_size", 0));
 	CHECK_VAL(io1.out.oplock_level, smb2_util_oplock_level("b"));
 
 	status = smb2_session_setup_spnego(tree->session,
@@ -298,18 +397,28 @@ bool test_session_reauth2(struct torture_context *tctx, struct smb2_tree *tree)
 	CHECK_STATUS(status, NT_STATUS_OK);
 	_h1 = io1.out.file.handle;
 	h1 = &_h1;
-	CHECK_CREATED(&io1, CREATED, FILE_ATTRIBUTE_ARCHIVE);
+	CHECK_CREATED(&io1, CREATED, FILE_ATTRIBUTE_ARCHIVE,
+	   torture_setting_ulong(tctx, "fs_min_alloc_size", 0));
 	CHECK_VAL(io1.out.oplock_level, smb2_util_oplock_level("b"));
 
-	/* re-authenticate as anonymous */
+	if (torture_setting_bool(tctx, "likewise", false)) {
+		/* likewise does not support anonymous */
+		torture_warning(tctx, "LIKEWISE: anonymous not supported");
+		anon_creds = test_session_other_user(tctx, tree, mem_ctx);
+	} else {
+		/* re-authenticate as anonymous */
 
-	anon_creds = cli_credentials_init_anon(mem_ctx);
-	torture_assert(tctx, (anon_creds != NULL), "talloc error");
+		anon_creds = cli_credentials_init_anon(mem_ctx);
+		torture_assert(tctx, (anon_creds != NULL), "talloc error");
+	}
 
-	status = smb2_session_setup_spnego(tree->session,
+	if (anon_creds != NULL) {
+
+		status = smb2_session_setup_spnego(tree->session,
 					   anon_creds,
 					   0 /* previous_session_id */);
-	CHECK_STATUS(status, NT_STATUS_OK);
+		CHECK_STATUS(status, NT_STATUS_OK);
+	}
 
 	/* try to access the file via the old handle */
 
@@ -382,7 +491,8 @@ bool test_session_reauth3(struct torture_context *tctx, struct smb2_tree *tree)
 	CHECK_STATUS(status, NT_STATUS_OK);
 	_h1 = io1.out.file.handle;
 	h1 = &_h1;
-	CHECK_CREATED(&io1, CREATED, FILE_ATTRIBUTE_ARCHIVE);
+	CHECK_CREATED(&io1, CREATED, FILE_ATTRIBUTE_ARCHIVE,
+	   torture_setting_ulong(tctx, "fs_min_alloc_size", 0));
 	CHECK_VAL(io1.out.oplock_level, smb2_util_oplock_level("b"));
 
 	/* get the security descriptor */
@@ -395,16 +505,30 @@ bool test_session_reauth3(struct torture_context *tctx, struct smb2_tree *tree)
 
 	status = smb2_getinfo_file(tree, mem_ctx, &qfinfo);
 	CHECK_STATUS(status, NT_STATUS_OK);
-	/* re-authenticate as anonymous */
 
-	anon_creds = cli_credentials_init_anon(mem_ctx);
-	torture_assert(tctx, (anon_creds != NULL), "talloc error");
+	if (torture_setting_bool(tctx, "likewise", false)) {
+		/* likewise does not support anonymous */
+		torture_warning(tctx, "LIKEWISE: anonymous not supported");
 
-	status = smb2_session_setup_spnego(tree->session,
+		anon_creds = test_session_other_user(tctx, tree, mem_ctx);
+	} else {
+		/* re-authenticate as anonymous */
+		anon_creds = cli_credentials_init_anon(mem_ctx);
+		torture_assert(tctx, (anon_creds != NULL), "talloc error");
+
+		status = smb2_session_setup_spnego(tree->session,
 					   anon_creds,
 					   0 /* previous_session_id */);
-	CHECK_STATUS(status, NT_STATUS_OK);
+		CHECK_STATUS(status, NT_STATUS_OK);
+	}
 
+	if (anon_creds != NULL) {
+		status = smb2_session_setup_spnego(tree->session,
+					   anon_creds,
+					   0 /* previous_session_id */);
+		CHECK_STATUS(status, NT_STATUS_OK);
+	}
+	
 	/* try to access the file via the old handle */
 
 	ZERO_STRUCT(qfinfo);
@@ -486,7 +610,8 @@ bool test_session_reauth4(struct torture_context *tctx, struct smb2_tree *tree)
 	CHECK_STATUS(status, NT_STATUS_OK);
 	_h1 = io1.out.file.handle;
 	h1 = &_h1;
-	CHECK_CREATED(&io1, CREATED, FILE_ATTRIBUTE_ARCHIVE);
+	CHECK_CREATED(&io1, CREATED, FILE_ATTRIBUTE_ARCHIVE,
+	   torture_setting_ulong(tctx, "fs_min_alloc_size", 0));
 	CHECK_VAL(io1.out.oplock_level, smb2_util_oplock_level("b"));
 
 	/* get the security descriptor */
@@ -502,19 +627,27 @@ bool test_session_reauth4(struct torture_context *tctx, struct smb2_tree *tree)
 
 	sd1 = qfinfo.query_secdesc.out.sd;
 
-	/* re-authenticate as anonymous */
+	if (torture_setting_bool(tctx, "likewise", false)) {
+		/* likewise does not support anonymous */
+		torture_warning(tctx, "LIKEWISE: anonymous not supported");
 
-	anon_creds = cli_credentials_init_anon(mem_ctx);
-	torture_assert(tctx, (anon_creds != NULL), "talloc error");
+		anon_creds = test_session_other_user(tctx, tree, mem_ctx);
+		extra_sid = dom_sid_parse_talloc(tctx, SID_NT_SYSTEM);
 
-	status = smb2_session_setup_spnego(tree->session,
+	} else {
+		/* re-authenticate as anonymous */
+		anon_creds = cli_credentials_init_anon(mem_ctx);
+		torture_assert(tctx, (anon_creds != NULL), "talloc error");
+		extra_sid = dom_sid_parse_talloc(tctx, SID_NT_ANONYMOUS);
+
+	}
+
+	if (anon_creds != NULL) {
+		status = smb2_session_setup_spnego(tree->session,
 					   anon_creds,
 					   0 /* previous_session_id */);
-	CHECK_STATUS(status, NT_STATUS_OK);
-
-	/* give full access on the file to anonymous */
-
-	extra_sid = dom_sid_parse_talloc(tctx, SID_NT_ANONYMOUS);
+		CHECK_STATUS(status, NT_STATUS_OK);
+	}
 
 	ZERO_STRUCT(ace);
 	ace.type = SEC_ACE_TYPE_ACCESS_ALLOWED;
@@ -619,7 +752,8 @@ bool test_session_reauth5(struct torture_context *tctx, struct smb2_tree *tree)
 	CHECK_STATUS(status, NT_STATUS_OK);
 	_h1 = io1.out.file.handle;
 	h1 = &_h1;
-	CHECK_CREATED(&io1, CREATED, FILE_ATTRIBUTE_ARCHIVE);
+	CHECK_CREATED(&io1, CREATED, FILE_ATTRIBUTE_ARCHIVE,
+	   torture_setting_ulong(tctx, "fs_min_alloc_size", 0));
 	CHECK_VAL(io1.out.oplock_level, smb2_util_oplock_level("b"));
 
 	/* get the security descriptor */
@@ -635,15 +769,31 @@ bool test_session_reauth5(struct torture_context *tctx, struct smb2_tree *tree)
 
 	f_sd1 = qfinfo.query_secdesc.out.sd;
 
-	/* re-authenticate as anonymous */
+	if (torture_setting_bool(tctx, "likewise", false)) {
+		/* likewise does not support anonymous */
+		torture_warning(tctx, "LIKEWISE: anonymous not supported");
 
-	anon_creds = cli_credentials_init_anon(mem_ctx);
-	torture_assert(tctx, (anon_creds != NULL), "talloc error");
+		anon_creds = test_session_other_user(tctx, tree, mem_ctx);
 
-	status = smb2_session_setup_spnego(tree->session,
+		extra_sid = dom_sid_parse_talloc(tctx, SID_NT_SYSTEM);
+
+	} else {
+		/* re-authenticate as anonymous */
+
+		anon_creds = cli_credentials_init_anon(mem_ctx);
+		torture_assert(tctx, (anon_creds != NULL), "talloc error");
+
+		/* give full access on the file to anonymous */
+
+		extra_sid = dom_sid_parse_talloc(tctx, SID_NT_ANONYMOUS);
+	}
+
+	if (anon_creds != NULL) {
+		status = smb2_session_setup_spnego(tree->session,
 					   anon_creds,
 					   0 /* previous_session_id */);
-	CHECK_STATUS(status, NT_STATUS_OK);
+		CHECK_STATUS(status, NT_STATUS_OK);
+	}
 
 	/* try to rename the file: fails */
 
@@ -658,7 +808,12 @@ bool test_session_reauth5(struct torture_context *tctx, struct smb2_tree *tree)
 	sfinfo.rename_information.in.new_name = fname2;
 
 	status = smb2_setinfo_file(tree, &sfinfo);
-	CHECK_STATUS(status, NT_STATUS_ACCESS_DENIED);
+	if (torture_setting_bool(tctx, "likewise", false)) {
+		torture_warning(tctx, "LIKEWISE: access expected");
+		CHECK_STATUS(status, NT_STATUS_OK);
+	}
+	else
+		CHECK_STATUS(status, NT_STATUS_ACCESS_DENIED);
 
 	/* re-authenticate as original user again */
 
@@ -667,9 +822,6 @@ bool test_session_reauth5(struct torture_context *tctx, struct smb2_tree *tree)
 					   0 /* previous_session_id */);
 	CHECK_STATUS(status, NT_STATUS_OK);
 
-	/* give full access on the file to anonymous */
-
-	extra_sid = dom_sid_parse_talloc(tctx, SID_NT_ANONYMOUS);
 
 	ZERO_STRUCT(ace);
 	ace.type = SEC_ACE_TYPE_ACCESS_ALLOWED;
@@ -702,13 +854,22 @@ bool test_session_reauth5(struct torture_context *tctx, struct smb2_tree *tree)
 
 	/* re-authenticate as anonymous - again */
 
-	anon_creds = cli_credentials_init_anon(mem_ctx);
-	torture_assert(tctx, (anon_creds != NULL), "talloc error");
+	if (torture_setting_bool(tctx, "likewise", false)) {
+		/* likewise does not support anonymous */
 
-	status = smb2_session_setup_spnego(tree->session,
+		torture_warning(tctx, "LIKEWISE: anonymous not supported");
+		anon_creds = test_session_other_user(tctx, tree, mem_ctx);
+	} else {
+		anon_creds = cli_credentials_init_anon(mem_ctx);
+		torture_assert(tctx, (anon_creds != NULL), "talloc error");
+	}
+
+	if (anon_creds != NULL) {
+		status = smb2_session_setup_spnego(tree->session,
 					   anon_creds,
 					   0 /* previous_session_id */);
-	CHECK_STATUS(status, NT_STATUS_OK);
+		CHECK_STATUS(status, NT_STATUS_OK);
+	}
 
 	/* try to rename the file: fails */
 
@@ -719,7 +880,12 @@ bool test_session_reauth5(struct torture_context *tctx, struct smb2_tree *tree)
 	sfinfo.rename_information.in.new_name = fname2;
 
 	status = smb2_setinfo_file(tree, &sfinfo);
-	CHECK_STATUS(status, NT_STATUS_ACCESS_DENIED);
+	if (torture_setting_bool(tctx, "likewise", false)) {
+		torture_warning(tctx, "LIKEWISE: access allowed");
+		CHECK_STATUS(status, NT_STATUS_OK);
+	}
+	else
+		CHECK_STATUS(status, NT_STATUS_ACCESS_DENIED);
 
 	/* give full access on the parent dir to anonymous */
 
@@ -774,7 +940,12 @@ bool test_session_reauth5(struct torture_context *tctx, struct smb2_tree *tree)
 	sfinfo.rename_information.in.new_name = fname2;
 
 	status = smb2_setinfo_file(tree, &sfinfo);
-	CHECK_STATUS(status, NT_STATUS_ACCESS_DENIED);
+	if (torture_setting_bool(tctx, "likewise", false)) {
+		torture_warning(tctx, "LIKEWISE: access allowed");
+		CHECK_STATUS(status, NT_STATUS_OK);
+	}
+	else
+		CHECK_STATUS(status, NT_STATUS_ACCESS_DENIED);
 
 	/* re-authenticate as original user - again */
 
@@ -825,7 +996,8 @@ bool test_session_reauth5(struct torture_context *tctx, struct smb2_tree *tree)
 	CHECK_STATUS(status, NT_STATUS_OK);
 	_h1 = io1.out.file.handle;
 	h1 = &_h1;
-	CHECK_CREATED(&io1, EXISTED, FILE_ATTRIBUTE_ARCHIVE);
+	CHECK_CREATED(&io1, EXISTED, FILE_ATTRIBUTE_ARCHIVE,
+	   torture_setting_ulong(tctx, "fs_min_alloc_size", 0));
 	CHECK_VAL(io1.out.oplock_level, smb2_util_oplock_level("b"));
 
 	/* try to access the file via the old handle */
@@ -1018,7 +1190,8 @@ static bool test_session_expire1(struct torture_context *tctx)
 	CHECK_STATUS(status, NT_STATUS_OK);
 	_h1 = io1.out.file.handle;
 	h1 = &_h1;
-	CHECK_CREATED(&io1, CREATED, FILE_ATTRIBUTE_ARCHIVE);
+	CHECK_CREATED(&io1, CREATED, FILE_ATTRIBUTE_ARCHIVE,
+	   torture_setting_ulong(tctx, "fs_min_alloc_size", 0));
 	CHECK_VAL(io1.out.oplock_level, smb2_util_oplock_level("b"));
 
 	/* get the security descriptor */
