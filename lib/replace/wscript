@@ -441,8 +441,6 @@ removeea setea
     if Options.options.gettext_location != 'None' and (not conf.env['HAVE_GETTEXT'] or not conf.env['HAVE_DGETTEXT']):
         conf.fatal('library gettext not found at specified location')
 
-    conf.CHECK_FUNCS_IN('pthread_create', 'pthread', checklibc=True, headers='pthread.h')
-
     conf.CHECK_FUNCS_IN('crypt', 'crypt', checklibc=True)
 
     conf.CHECK_VARIABLE('rl_event_hook', define='HAVE_DECL_RL_EVENT_HOOK', always=True,

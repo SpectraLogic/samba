@@ -19,9 +19,9 @@ IDMAP_SRC = 'idmap.c idmap_util.c idmap_tdb_common.c ${IDMAP_RW_SRC}'
 
 bld.SAMBA3_LIBRARY('idmap',
                    source=IDMAP_SRC,
-                   deps='samba-util',
-                   vars=locals(),
+                   deps='samba-util pdb',
                    allow_undefined_symbols=True,
+                   vars=locals(),
                    private_library=True)
 
 bld.SAMBA3_SUBSYSTEM('IDMAP_HASH',
@@ -37,9 +37,9 @@ bld.SAMBA3_SUBSYSTEM('IDMAP_AD',
 
 bld.SAMBA3_MODULE('idmap_ad',
                  subsystem='idmap',
-                 allow_undefined_symbols=True,
                  source='',
                  deps='IDMAP_AD',
+                 allow_undefined_symbols=True,
                  init_function='',
                  internal_module=bld.SAMBA3_IS_STATIC_MODULE('idmap_ad'),
                  enabled=bld.SAMBA3_IS_ENABLED_MODULE('idmap_ad') and bld.CONFIG_SET("HAVE_LDAP"))
@@ -90,6 +90,7 @@ bld.SAMBA3_MODULE('idmap_tdb',
                  subsystem='idmap',
                  source=IDMAP_TDB_SRC,
                  deps='samba-util tdb',
+                 allow_undefined_symbols=True,
                  init_function='',
                  internal_module=bld.SAMBA3_IS_STATIC_MODULE('idmap_tdb'),
                  enabled=bld.SAMBA3_IS_ENABLED_MODULE('idmap_tdb'))
@@ -97,7 +98,7 @@ bld.SAMBA3_MODULE('idmap_tdb',
 bld.SAMBA3_MODULE('idmap_tdb2',
                  subsystem='idmap',
                  source=IDMAP_TDB2_SRC,
-                 deps='samba-util tdb',
+                 deps='samba-util tdb param',
                  init_function='',
                  internal_module=bld.SAMBA3_IS_STATIC_MODULE('idmap_tdb2'),
                  enabled=bld.SAMBA3_IS_ENABLED_MODULE('idmap_tdb2'))
@@ -115,10 +116,10 @@ bld.SAMBA3_MODULE('idmap_autorid',
                  subsystem='idmap',
                  source=IDMAP_AUTORID_SRC,
                  deps='samba-util tdb',
+                 allow_undefined_symbols=True,
                  init_function='',
                  internal_module=bld.SAMBA3_IS_STATIC_MODULE('idmap_autorid'),
-                 enabled=bld.SAMBA3_IS_ENABLED_MODULE('idmap_autorid'),
-                  allow_undefined_symbols=True)
+                 enabled=bld.SAMBA3_IS_ENABLED_MODULE('idmap_autorid'))
 
 
 NSS_INFO_TEMPLATE_SRC = 'nss_info_template.c'

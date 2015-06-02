@@ -43,7 +43,6 @@ def set_options(opt):
     opt.RECURSE('lib/nss_wrapper')
     opt.RECURSE('lib/socket_wrapper')
     opt.RECURSE('lib/uid_wrapper')
-    opt.RECURSE('pidl')
     opt.RECURSE('source3')
     opt.RECURSE('lib/util')
 
@@ -144,7 +143,6 @@ def configure(conf):
     conf.RECURSE('lib/subunit/c')
     conf.RECURSE('libcli/smbreadline')
     conf.RECURSE('lib/crypto')
-    conf.RECURSE('pidl')
     conf.RECURSE('selftest')
     conf.RECURSE('source3')
 

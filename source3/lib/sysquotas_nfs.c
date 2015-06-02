@@ -154,7 +154,7 @@ int sys_get_nfs_quota(const char *path, const char *bdev,
 	gq_args.gqa_uid = id.uid;
 
 	DEBUG(10, ("sys_get_nfs_quotas: Asking for quota of path '%s' on "
-		   "host '%s', rpcprog '%i', rpcvers '%i', network '%s'\n",
+		   "host '%s', rpcprog '%li', rpcvers '%li', network '%s'\n",
 		    host, testpath+1, RQUOTAPROG, RQUOTAVERS, "udp"));
 
 	clnt = clnt_create(host, RQUOTAPROG, RQUOTAVERS, "udp");

@@ -137,7 +137,6 @@ bld.RECURSE('codepages')
 if bld.AD_DC_BUILD_IS_ENABLED():
     bld.RECURSE('source4/setup')
 bld.RECURSE('source4/scripting')
-bld.RECURSE('pidl')
 bld.RECURSE('lib')
 bld.RECURSE('libds/common')
 bld.RECURSE('source3')

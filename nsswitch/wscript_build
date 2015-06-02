@@ -57,6 +57,12 @@ elif (host_os.rfind('freebsd') > -1):
 			  realname='nss_winbind.so.1',
 			  vnum='1')
 
+	bld.SAMBA3_LIBRARY('nss_wins',
+			  source='wins.c wins_freebsd.c',
+			  deps='''param libsmb LIBTSOCKET''',
+			  realname='nss_wins.so.1',
+			  vnum='1')
+
 elif (host_os.rfind('netbsd') > -1):
 	# NetBSD winbind client is implemented as a wrapper
 	# around the Linux version. It needs getpwent_r() to
