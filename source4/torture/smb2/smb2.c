@@ -168,9 +168,13 @@ NTSTATUS torture_smb2_init(void)
 	torture_suite_add_1smb2_test(suite, "bench-oplock", test_smb2_bench_oplock);
 	torture_suite_add_1smb2_test(suite, "hold-oplock", test_smb2_hold_oplock);
 	torture_suite_add_suite(suite, torture_smb2_session_init());
+	torture_suite_add_suite(suite, torture_smb2_spectra_init());
 	torture_suite_add_suite(suite, torture_smb2_replay_init());
 
 	torture_suite_add_suite(suite, torture_smb2_doc_init());
+
+	torture_suite_add_suite(suite, torture_smb2_write_init());
+	torture_suite_add_suite(suite, torture_smb2_read_write_init());
 
 	suite->description = talloc_strdup(suite, "SMB2-specific tests");
 

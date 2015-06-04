@@ -5,8 +5,5 @@ conf.CHECK_HEADERS('sys/inotify.h', add_headers=False)
 conf.CHECK_DECLS('F_SETLEASE', headers='linux/fcntl.h', reverse=True)
 conf.CHECK_DECLS('SA_SIGINFO', headers='signal.h', reverse=True)
 
-conf.SET_TARGET_TYPE('inotify', 'EMPTY')
-conf.CHECK_FUNCS_IN('inotify_init', 'inotify', checklibc=True, headers='sys/inotify.h')
-
 if (conf.CONFIG_SET('HAVE_SYS_INOTIFY_H')):
     conf.DEFINE('HAVE_LINUX_INOTIFY', 1)

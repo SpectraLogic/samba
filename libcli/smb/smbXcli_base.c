@@ -4778,6 +4778,24 @@ static void smb2cli_validate_negotiate_info_done(struct tevent_req *subreq)
 		tevent_req_done(req);
 		return;
 	}
+	if (NT_STATUS_EQUAL(status, NT_STATUS_NOT_SUPPORTED)) {
+		/*
+		 * The response was signed, but not supported
+		 *
+		 * This is returned by Likewise
+		 */
+		tevent_req_done(req);
+		return;
+	}
+	if (NT_STATUS_EQUAL(status, NT_STATUS_NOT_SUPPORTED)) {
+		/*
+		 * The response was signed, but not supported
+		 *
+		 * This is returned by Likewise
+		 */
+		tevent_req_done(req);
+		return;
+	}
 	if (tevent_req_nterror(req, status)) {
 		return;
 	}

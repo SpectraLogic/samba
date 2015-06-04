@@ -435,7 +435,7 @@ static bool test_lease_multiopen(struct torture_context *tctx,
 				CHECK_CREATED(&io, CREATED, FILE_ATTRIBUTE_ARCHIVE);
 			else
 				CHECK_CREATED(&io, EXISTED, FILE_ATTRIBUTE_ARCHIVE);
-			CHECK_LEASE(&io, t.initial, true, LEASE1);
+			CHECK_LEASE(&io, t.initial, true, LEASE1, 0);
 			h[j] = io.out.file.handle;
 		}
 

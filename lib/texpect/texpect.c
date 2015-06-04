@@ -46,6 +46,9 @@
 #elif defined HAVE_LIBUTIL_H
 #include <libutil.h>
 #endif
+#ifdef HAVE_SIGNAL_H
+#include <signal.h>
+#endif
 
 #ifdef	STREAMSPTY
 #include <stropts.h>

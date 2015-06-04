@@ -179,7 +179,6 @@ torture_smb2_fileinfo_quirks(struct torture_context *tctx,
 	return false;
 }
 
-
 /*
   test fileinfo levels
 */
@@ -237,6 +236,65 @@ static bool torture_smb2_fileinfo(struct torture_context *tctx, struct smb2_tree
 /*
   test fsinfo levels
 */
+static bool torture_smb2_fs_full_info(struct torture_context *tctx, struct smb2_tree *tree)
+{
+	int i;
+	NTSTATUS status;
+	struct smb2_handle handle;
+	struct fs_level fs_full = {LEVEL(RAW_QFS_FULL_SIZE_INFORMATION)};
+	struct fs_level fs_size = {LEVEL(RAW_QFS_SIZE_INFORMATION)};
+
+
+	/* Likewise: a small test to verify a simple change
+	 */
+	status = smb2_util_roothandle(tree, &handle);
+	torture_assert_ntstatus_ok(tctx, status, "Unable to create root handle");
+
+	fs_full.info.generic.level = fs_full.level;
+	fs_full.info.generic.handle = handle;
+	fs_full.status = smb2_getinfo_fs(tree, tree, &fs_full.info);
+	torture_assert_ntstatus_ok(tctx, fs_full.status, fs_full.name);
+
+	fs_size.info.generic.level = fs_size.level;
+	fs_size.info.generic.handle = handle;
+	fs_size.status = smb2_getinfo_fs(tree, tree, &fs_size.info);
+	torture_assert_ntstatus_ok(tctx, fs_size.status, fs_size.name);
+
+	fprintf(stderr, 
+		"FS_FULL total_alloc_units:         0x%lx\n"
+		"FS_FULL call_avail_alloc_units:    0x%lx\n"
+		"FS_FULL actual_avail_alloc_units:  0x%lx\n"
+		"FS_FULL sectors_per_unit:          0x%x\n"
+		"FS_FULL bytes_per_sector:          0x%x\n",
+		fs_full.info.full_size_information.out.total_alloc_units,
+		fs_full.info.full_size_information.out.call_avail_alloc_units,
+		fs_full.info.full_size_information.out.actual_avail_alloc_units,
+		fs_full.info.full_size_information.out.sectors_per_unit,
+		fs_full.info.full_size_information.out.bytes_per_sector);
+
+	fprintf(stderr, 
+		"FS_SIZE total_alloc_units:         0x%lx\n"
+		"FS_SIZE avail_alloc_units:         0x%lx\n"
+		"FS_SIZE sectors_per_unit:          0x%x\n"
+		"FS_SIZE bytes_per_sector:          0x%x\n",
+		fs_size.info.size_info.out.total_alloc_units,
+		fs_size.info.size_info.out.avail_alloc_units,
+		fs_size.info.size_info.out.sectors_per_unit,
+		fs_size.info.size_info.out.bytes_per_sector);
+
+	torture_assert_u64_equal(tctx, 
+		fs_full.info.full_size_information.out.total_alloc_units,
+		fs_size.info.size_info.out.total_alloc_units,
+		"FS SIZE and FS FULL SIZE total alloc not equal");
+
+	torture_assert_u64_equal(tctx, 
+		fs_full.info.full_size_information.out.call_avail_alloc_units,
+		fs_size.info.size_info.out.avail_alloc_units,
+		"FS SIZE and FS FULL SIZE avail not equal");
+
+	return true;
+}
+ 
 static bool torture_smb2_fsinfo(struct torture_context *tctx)
 {
 	bool ret;
@@ -257,9 +315,16 @@ static bool torture_smb2_fsinfo(struct torture_context *tctx)
 		fs_levels[i].info.generic.level = fs_levels[i].level;
 		fs_levels[i].info.generic.handle = handle;
 		fs_levels[i].status = smb2_getinfo_fs(tree, tree, &fs_levels[i].info);
-		torture_assert_ntstatus_ok(tctx, fs_levels[i].status,
+
+		if (torture_smb2_fsinfo_quirks(tctx, &fs_levels[i]))
+			continue;
+		else
+			torture_assert_ntstatus_ok(tctx, fs_levels[i].status,
 					   fs_levels[i].name);
 	}
+
+	ret = torture_smb2_fs_full_info(tctx, tree);
+	torture_assert(tctx, ret, "fs full info failed");
 
 	return true;
 }
@@ -331,6 +396,42 @@ static bool torture_smb2_qfs_buffercheck(struct torture_context *tctx)
 		{ 11, 28 },
 	};
 
+
+	if (torture_setting_bool(tctx, "likewise", false)) {
+	        for (i=0; i<ARRAY_SIZE(levels); i++) {
+			switch(levels[i].level)
+			{
+				case 1:
+				/* fixed length of 24 seems to be a windows 
+				 * requirement that the minimum volume length 
+				 * is 3 wide characters; likewise only 
+				 * requires 1
+				 */
+				torture_warning(tctx,  "LIKEWISE: "
+				  "resetting minimum required for " 
+				  "%d from %ld to 20",
+				  levels[i].level, levels[i].fixed);
+			 	
+				levels[i].fixed = 20;
+				break;
+
+				case 5:
+				/* fixed level of 16 seems to be a windows 
+				 * requirement that the minimum filesystem
+				 * name is is 2 wide characters; likewise only 
+				 * requires 1
+				 */
+				torture_warning(tctx,  "LIKEWISE: "
+				  "resetting minimum required for " 
+				  "%d from %ld to 14",
+				  levels[i].level, levels[i].fixed);
+
+				levels[i].fixed = 14;
+
+			}
+		}
+	}
+
 	printf("Testing SMB2_GETINFO_FS buffer sizes\n");
 
 	ret = torture_smb2_connection(tctx, &tree);
@@ -355,6 +456,17 @@ static bool torture_smb2_qfs_buffercheck(struct torture_context *tctx)
 		b.in.output_buffer_length	= 65535;
 
 		status = smb2_getinfo(tree, tree, &b);
+
+		if (torture_setting_bool(tctx, "likewise", false)) {
+			if (NT_STATUS_EQUAL(status, NT_STATUS_NOT_SUPPORTED)) {
+				torture_warning(tctx,  "LIKEWISE: "
+				  "SMB2_GETINFO_FS level %d %s",
+				  levels[i].level,
+				  nt_errstr(NT_STATUS_NOT_SUPPORTED));
+
+				continue;
+			}
+		}
 
 		torture_assert_ntstatus_equal(
 			tctx, status, NT_STATUS_OK,
@@ -436,6 +548,21 @@ static bool torture_smb2_qfile_buffercheck(struct torture_context *tctx)
 		b.in.output_buffer_length	= 65535;
 
 		status = smb2_getinfo(tree, tree, &b);
+
+		/* MS-FSCC section 2.4 says:
+		 * "If a file system does not support a specific file 
+		 *  information class, STATUS_INVALID_PARAMETER MUST 
+		 *  be returned."
+		 */
+		if (torture_setting_bool(tctx, "likewise", false)) {
+			if (NT_STATUS_EQUAL(status, NT_STATUS_NOT_SUPPORTED)) {
+				torture_warning(tctx,  "LIKEWISE: "
+				  "expected %s, received %s",
+				  nt_errstr(NT_STATUS_NOT_IMPLEMENTED), 
+				  nt_errstr(NT_STATUS_NOT_SUPPORTED));
+				continue;
+			}
+		}
 		if (NT_STATUS_EQUAL(status, NT_STATUS_NOT_IMPLEMENTED)) {
 			continue;
 		}

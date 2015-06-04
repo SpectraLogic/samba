@@ -190,7 +190,8 @@ bool test_session_reconnect1(struct torture_context *tctx, struct smb2_tree *tre
 	 * the second session should still be valid after this
 	 * operation.
 	 */
-	if (!torture_smb2_connection_ext(tctx, 0, &tree3)) {
+	if (!torture_smb2_connection_ext(tctx, 0,
+		&tree->session->transport->options, &tree3)) {
 		torture_warning(tctx, "session connect again failed\n");
 		ret = false;
 		goto done;
@@ -1072,7 +1073,8 @@ bool test_session_reauth6(struct torture_context *tctx, struct smb2_tree *tree)
 	CHECK_STATUS(status, NT_STATUS_OK);
 	_h1 = io1.out.file.handle;
 	h1 = &_h1;
-	CHECK_CREATED(&io1, CREATED, FILE_ATTRIBUTE_ARCHIVE);
+	CHECK_CREATED(&io1, CREATED, FILE_ATTRIBUTE_ARCHIVE,
+	   torture_setting_ulong(tctx, "fs_min_alloc_size", 0));
 	CHECK_VAL(io1.out.oplock_level, smb2_util_oplock_level("b"));
 
 	/*
@@ -1285,7 +1287,8 @@ bool test_session_bind1(struct torture_context *tctx, struct smb2_tree *tree1)
 	CHECK_STATUS(status, NT_STATUS_OK);
 	_h1 = io1.out.file.handle;
 	h1 = &_h1;
-	CHECK_CREATED(&io1, CREATED, FILE_ATTRIBUTE_ARCHIVE);
+	CHECK_CREATED(&io1, CREATED, FILE_ATTRIBUTE_ARCHIVE,
+	   torture_setting_ulong(tctx, "fs_min_alloc_size", 0));
 	CHECK_VAL(io1.out.oplock_level, smb2_util_oplock_level("b"));
 
 	status = smb2_connect(tctx,

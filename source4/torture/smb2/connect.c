@@ -28,7 +28,7 @@
 /*
   send a close
 */
-static NTSTATUS torture_smb2_close(struct smb2_tree *tree, struct smb2_handle handle)
+NTSTATUS torture_smb2_close(struct smb2_tree *tree, struct smb2_handle handle)
 {
 	struct smb2_close io;
 	NTSTATUS status;
@@ -137,7 +137,7 @@ static NTSTATUS torture_smb2_write(struct torture_context *tctx, struct smb2_tre
 /*
   send a create
 */
-static struct smb2_handle torture_smb2_createfile(struct smb2_tree *tree, 
+struct smb2_handle torture_smb2_createfile(struct smb2_tree *tree, 
 					      const char *fname)
 {
 	struct smb2_create io;

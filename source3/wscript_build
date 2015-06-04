@@ -1320,7 +1320,7 @@ bld.SAMBA3_BINARY('msg_source',
                  install=False)
 
 bld.SAMBA3_BINARY('smbcacls',
-                 source='utils/smbcacls.c',
+                 source='utils/smbcacls.c lib/util_sd.c',
                  deps='''
                  talloc
                  popt_samba3
@@ -1345,9 +1345,11 @@ bld.SAMBA3_BINARY('eventlogadm',
                  LIBEVENTLOG''')
 
 bld.SAMBA3_BINARY('sharesec',
-                 source='utils/sharesec.c',
+                 source='utils/sharesec.c lib/util_sd.c',
                  deps='''
                  talloc
+                 msrpc3
+                 libcli_lsa3
                  popt_samba3''')
 
 bld.SAMBA3_BINARY('pdbtest',

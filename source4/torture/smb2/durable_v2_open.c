@@ -42,10 +42,17 @@
 		goto done; \
 	}} while (0)
 
-#define CHECK_CREATED(__io, __created, __attribute)			\
+#define CHECK_CREATED(__ctx, __io, __created, __attribute)		\
 	do {								\
 		CHECK_VAL((__io)->out.create_action, NTCREATEX_ACTION_ ## __created); \
-		CHECK_VAL((__io)->out.alloc_size, 0);			\
+		if (torture_setting_bool(__ctx, "likewise", false))  {	\
+			torture_warning(__ctx, 				\
+			"LIKEWISE: Ignoring allocation size check: expected %ld, received %ld", 	\
+			(__io)->out.alloc_size, torture_setting_ulong((__ctx), \
+			"fs_min_alloc_size", 0));			\
+		} else {						\
+			CHECK_VAL((__io)->out.alloc_size, 0);		\
+		}							\
 		CHECK_VAL((__io)->out.size, 0);				\
 		CHECK_VAL((__io)->out.file_attr, (__attribute));	\
 		CHECK_VAL((__io)->out.reserved2, 0);			\
@@ -119,7 +126,7 @@ bool test_durable_v2_open_create_blob(struct torture_context *tctx,
 	CHECK_STATUS(status, NT_STATUS_OK);
 	_h = io.out.file.handle;
 	h = &_h;
-	CHECK_CREATED(&io, CREATED, FILE_ATTRIBUTE_ARCHIVE);
+	CHECK_CREATED(tctx, &io, CREATED, FILE_ATTRIBUTE_ARCHIVE);
 	CHECK_VAL(io.out.oplock_level, smb2_util_oplock_level("b"));
 	CHECK_VAL(io.out.durable_open, false);
 	CHECK_VAL(io.out.durable_open_v2, true);
@@ -273,7 +280,7 @@ static bool test_one_durable_v2_open_oplock(struct torture_context *tctx,
 	CHECK_STATUS(status, NT_STATUS_OK);
 	_h = io.out.file.handle;
 	h = &_h;
-	CHECK_CREATED(&io, CREATED, FILE_ATTRIBUTE_ARCHIVE);
+	CHECK_CREATED(tctx, &io, CREATED, FILE_ATTRIBUTE_ARCHIVE);
 	CHECK_VAL(io.out.durable_open, false);
 	CHECK_VAL(io.out.durable_open_v2, test.durable);
 	CHECK_VAL(io.out.persistent_open, test.persistent);
@@ -435,7 +442,7 @@ static bool test_one_durable_v2_open_lease(struct torture_context *tctx,
 	CHECK_STATUS(status, NT_STATUS_OK);
 	_h = io.out.file.handle;
 	h = &_h;
-	CHECK_CREATED(&io, CREATED, FILE_ATTRIBUTE_ARCHIVE);
+	CHECK_CREATED(tctx, &io, CREATED, FILE_ATTRIBUTE_ARCHIVE);
 	CHECK_VAL(io.out.durable_open, false);
 	CHECK_VAL(io.out.durable_open_v2, test.durable);
 	CHECK_VAL(io.out.persistent_open, test.persistent);
@@ -543,7 +550,7 @@ bool test_durable_v2_open_reopen1(struct torture_context *tctx,
 	CHECK_STATUS(status, NT_STATUS_OK);
 	_h = io.out.file.handle;
 	h = &_h;
-	CHECK_CREATED(&io, CREATED, FILE_ATTRIBUTE_ARCHIVE);
+	CHECK_CREATED(tctx, &io, CREATED, FILE_ATTRIBUTE_ARCHIVE);
 	CHECK_VAL(io.out.oplock_level, smb2_util_oplock_level("b"));
 	CHECK_VAL(io.out.durable_open, false);
 	CHECK_VAL(io.out.durable_open_v2, true);
@@ -616,7 +623,7 @@ bool test_durable_v2_open_reopen1a(struct torture_context *tctx,
 	CHECK_STATUS(status, NT_STATUS_OK);
 	_h = io.out.file.handle;
 	h = &_h;
-	CHECK_CREATED(&io, CREATED, FILE_ATTRIBUTE_ARCHIVE);
+	CHECK_CREATED(tctx, &io, CREATED, FILE_ATTRIBUTE_ARCHIVE);
 	CHECK_VAL(io.out.oplock_level, smb2_util_oplock_level("b"));
 	CHECK_VAL(io.out.durable_open, false);
 	CHECK_VAL(io.out.durable_open_v2, true);
@@ -658,7 +665,7 @@ bool test_durable_v2_open_reopen1a(struct torture_context *tctx,
 	io2.in.create_guid = create_guid;
 	status = smb2_create(tree2, mem_ctx, &io2);
 	CHECK_STATUS(status, NT_STATUS_OK);
-	CHECK_CREATED(&io2, EXISTED, FILE_ATTRIBUTE_ARCHIVE);
+	CHECK_CREATED(tctx, &io2, EXISTED, FILE_ATTRIBUTE_ARCHIVE);
 	CHECK_VAL(io2.out.oplock_level, smb2_util_oplock_level("b"));
 	CHECK_VAL(io2.out.durable_open, false);
 	CHECK_VAL(io2.out.durable_open_v2, false); /* no dh2q response blob */
@@ -717,7 +724,7 @@ bool test_durable_v2_open_reopen2(struct torture_context *tctx,
 	CHECK_STATUS(status, NT_STATUS_OK);
 	_h = io.out.file.handle;
 	h = &_h;
-	CHECK_CREATED(&io, CREATED, FILE_ATTRIBUTE_ARCHIVE);
+	CHECK_CREATED(tctx, &io, CREATED, FILE_ATTRIBUTE_ARCHIVE);
 	CHECK_VAL(io.out.oplock_level, smb2_util_oplock_level("b"));
 	CHECK_VAL(io.out.durable_open, false);
 	CHECK_VAL(io.out.durable_open_v2, true);
@@ -776,7 +783,7 @@ bool test_durable_v2_open_reopen2(struct torture_context *tctx,
 
 	status = smb2_create(tree, mem_ctx, &io);
 	CHECK_STATUS(status, NT_STATUS_OK);
-	CHECK_CREATED(&io, EXISTED, FILE_ATTRIBUTE_ARCHIVE);
+	CHECK_CREATED(tctx, &io, EXISTED, FILE_ATTRIBUTE_ARCHIVE);
 	CHECK_VAL(io.out.durable_open, false);
 	CHECK_VAL(io.out.durable_open_v2, false); /* no dh2q response blob */
 	CHECK_VAL(io.out.persistent_open, false);
@@ -818,7 +825,7 @@ bool test_durable_v2_open_reopen2(struct torture_context *tctx,
 
 	status = smb2_create(tree, mem_ctx, &io);
 	CHECK_STATUS(status, NT_STATUS_OK);
-	CHECK_CREATED(&io, EXISTED, FILE_ATTRIBUTE_ARCHIVE);
+	CHECK_CREATED(tctx, &io, EXISTED, FILE_ATTRIBUTE_ARCHIVE);
 	CHECK_VAL(io.out.durable_open, false);
 	CHECK_VAL(io.out.durable_open_v2, false); /* no dh2q response blob */
 	CHECK_VAL(io.out.persistent_open, false);
@@ -878,7 +885,7 @@ bool test_durable_v2_open_reopen2b(struct torture_context *tctx,
 	CHECK_STATUS(status, NT_STATUS_OK);
 	_h = io.out.file.handle;
 	h = &_h;
-	CHECK_CREATED(&io, CREATED, FILE_ATTRIBUTE_ARCHIVE);
+	CHECK_CREATED(tctx, &io, CREATED, FILE_ATTRIBUTE_ARCHIVE);
 	CHECK_VAL(io.out.oplock_level, smb2_util_oplock_level("b"));
 	CHECK_VAL(io.out.durable_open, false);
 	CHECK_VAL(io.out.durable_open_v2, true);
@@ -908,7 +915,7 @@ bool test_durable_v2_open_reopen2b(struct torture_context *tctx,
 
 	status = smb2_create(tree, mem_ctx, &io);
 	CHECK_STATUS(status, NT_STATUS_OK);
-	CHECK_CREATED(&io, EXISTED, FILE_ATTRIBUTE_ARCHIVE);
+	CHECK_CREATED(tctx, &io, EXISTED, FILE_ATTRIBUTE_ARCHIVE);
 	CHECK_VAL(io.out.durable_open, false);
 	CHECK_VAL(io.out.durable_open_v2, false); /* no dh2q response blob */
 	CHECK_VAL(io.out.persistent_open, false);
@@ -967,7 +974,7 @@ bool test_durable_v2_open_reopen2c(struct torture_context *tctx,
 	CHECK_STATUS(status, NT_STATUS_OK);
 	_h = io.out.file.handle;
 	h = &_h;
-	CHECK_CREATED(&io, CREATED, FILE_ATTRIBUTE_ARCHIVE);
+	CHECK_CREATED(tctx, &io, CREATED, FILE_ATTRIBUTE_ARCHIVE);
 	CHECK_VAL(io.out.oplock_level, smb2_util_oplock_level("b"));
 	CHECK_VAL(io.out.durable_open, true);
 	CHECK_VAL(io.out.durable_open_v2, false);
@@ -1051,7 +1058,7 @@ bool test_durable_v2_open_reopen2_lease(struct torture_context *tctx,
 	CHECK_STATUS(status, NT_STATUS_OK);
 	_h = io.out.file.handle;
 	h = &_h;
-	CHECK_CREATED(&io, CREATED, FILE_ATTRIBUTE_ARCHIVE);
+	CHECK_CREATED(tctx, &io, CREATED, FILE_ATTRIBUTE_ARCHIVE);
 	CHECK_VAL(io.out.durable_open, false);
 	CHECK_VAL(io.out.durable_open_v2, true);
 	CHECK_VAL(io.out.persistent_open, false);
@@ -1156,7 +1163,7 @@ bool test_durable_v2_open_reopen2_lease(struct torture_context *tctx,
 	status = smb2_create(tree, mem_ctx, &io);
 	CHECK_STATUS(status, NT_STATUS_OK);
 
-	CHECK_CREATED(&io, EXISTED, FILE_ATTRIBUTE_ARCHIVE);
+	CHECK_CREATED(tctx, &io, EXISTED, FILE_ATTRIBUTE_ARCHIVE);
 	CHECK_VAL(io.out.durable_open, false);
 	CHECK_VAL(io.out.durable_open_v2, false); /* no dh2q response blob */
 	CHECK_VAL(io.out.persistent_open, false);
@@ -1221,7 +1228,7 @@ bool test_durable_v2_open_reopen2_lease(struct torture_context *tctx,
 	status = smb2_create(tree, mem_ctx, &io);
 	CHECK_STATUS(status, NT_STATUS_OK);
 
-	CHECK_CREATED(&io, EXISTED, FILE_ATTRIBUTE_ARCHIVE);
+	CHECK_CREATED(tctx, &io, EXISTED, FILE_ATTRIBUTE_ARCHIVE);
 	CHECK_VAL(io.out.durable_open, false);
 	CHECK_VAL(io.out.durable_open_v2, false); /* no dh2q response blob */
 	CHECK_VAL(io.out.persistent_open, false);
@@ -1298,7 +1305,7 @@ bool test_durable_v2_open_reopen2_lease_v2(struct torture_context *tctx,
 	CHECK_STATUS(status, NT_STATUS_OK);
 	_h = io.out.file.handle;
 	h = &_h;
-	CHECK_CREATED(&io, CREATED, FILE_ATTRIBUTE_ARCHIVE);
+	CHECK_CREATED(tctx, &io, CREATED, FILE_ATTRIBUTE_ARCHIVE);
 	CHECK_VAL(io.out.durable_open, false);
 	CHECK_VAL(io.out.durable_open_v2, true);
 	CHECK_VAL(io.out.persistent_open, false);
@@ -1400,7 +1407,7 @@ bool test_durable_v2_open_reopen2_lease_v2(struct torture_context *tctx,
 	status = smb2_create(tree, mem_ctx, &io);
 	CHECK_STATUS(status, NT_STATUS_OK);
 
-	CHECK_CREATED(&io, EXISTED, FILE_ATTRIBUTE_ARCHIVE);
+	CHECK_CREATED(tctx, &io, EXISTED, FILE_ATTRIBUTE_ARCHIVE);
 	CHECK_VAL(io.out.durable_open, false);
 	CHECK_VAL(io.out.durable_open_v2, false); /* no dh2q response blob */
 	CHECK_VAL(io.out.persistent_open, false);
@@ -1465,7 +1472,7 @@ bool test_durable_v2_open_reopen2_lease_v2(struct torture_context *tctx,
 
 	status = smb2_create(tree, mem_ctx, &io);
 	CHECK_STATUS(status, NT_STATUS_OK);
-	CHECK_CREATED(&io, EXISTED, FILE_ATTRIBUTE_ARCHIVE);
+	CHECK_CREATED(tctx, &io, EXISTED, FILE_ATTRIBUTE_ARCHIVE);
 	CHECK_VAL(io.out.durable_open, false);
 	CHECK_VAL(io.out.durable_open_v2, false); /* no dh2q response blob */
 	CHECK_VAL(io.out.persistent_open, false);
@@ -1536,7 +1543,7 @@ bool test_durable_v2_open_app_instance(struct torture_context *tctx,
 	CHECK_STATUS(status, NT_STATUS_OK);
 	_h1 = io1.out.file.handle;
 	h1 = &_h1;
-	CHECK_CREATED(&io1, CREATED, FILE_ATTRIBUTE_ARCHIVE);
+	CHECK_CREATED(tctx, &io1, CREATED, FILE_ATTRIBUTE_ARCHIVE);
 	CHECK_VAL(io1.out.oplock_level, smb2_util_oplock_level("b"));
 	CHECK_VAL(io1.out.durable_open, false);
 	CHECK_VAL(io1.out.durable_open_v2, true);
@@ -1563,7 +1570,7 @@ bool test_durable_v2_open_app_instance(struct torture_context *tctx,
 	CHECK_STATUS(status, NT_STATUS_OK);
 	_h2 = io2.out.file.handle;
 	h2 = &_h2;
-	CHECK_CREATED(&io2, EXISTED, FILE_ATTRIBUTE_ARCHIVE);
+	CHECK_CREATED(tctx, &io2, EXISTED, FILE_ATTRIBUTE_ARCHIVE);
 	CHECK_VAL(io2.out.oplock_level, smb2_util_oplock_level("b"));
 	CHECK_VAL(io2.out.durable_open, false);
 	CHECK_VAL(io2.out.durable_open_v2, true);
