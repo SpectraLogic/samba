@@ -18,5 +18,5 @@ done
 ) > $GDBSCRIPT
 
 # forcing the terminal avoids a problem on Fedora12
-TERM=none %%GDB_CMD%% -batch -x $GDBSCRIPT "$SHAREDLIB" < /dev/null
+TERM=none true -batch -x $GDBSCRIPT "$SHAREDLIB" < /dev/null
 rm -f $GDBSCRIPT

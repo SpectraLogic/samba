@@ -45,7 +45,7 @@ def subst_at_vars(task):
 
 def PKG_CONFIG_FILES(bld, pc_files, vnum=None):
     '''install some pkg_config pc files'''
-    dest = '${PKGCONFIGDIR}'
+    dest = '/usr/local/libdata/pkgconfig'
     dest = bld.EXPAND_VARIABLES(dest)
     for f in TO_LIST(pc_files):
         base=os.path.basename(f)
