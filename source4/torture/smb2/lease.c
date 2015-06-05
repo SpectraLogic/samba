@@ -2010,6 +2010,9 @@ static bool test_lease_breaking1(struct torture_context *tctx,
 
 	torture_assert(tctx, req2->state == SMB2_REQUEST_RECV, "req2 pending");
 
+	/* Give server 500ms to send an interim response. */
+	smb_msleep(500);
+
 	/*
 	 * We ack the lease break.
 	 */
