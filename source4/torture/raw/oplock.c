@@ -264,6 +264,11 @@ static uint8_t get_setinfo_break_count(struct torture_context *tctx)
 	if (TARGET_IS_W2K12(tctx)) {
 		return 2;
 	}
+
+	if (TARGET_IS_LIKEWISE(tctx)) {
+		return 2;
+	}
+
 	if (TARGET_IS_SAMBA3(tctx)) {
 		return 2;
 	}
@@ -791,7 +796,8 @@ static bool test_raw_oplock_exclusive7(struct torture_context *tctx,
 	torture_wait_for_oplock_break(tctx);
 	CHECK_VAL(break_info.failures, 0);
 
-	if (TARGET_IS_WINXP(tctx) || TARGET_IS_W2K12(tctx)) {
+	if (TARGET_IS_WINXP(tctx) || TARGET_IS_W2K12(tctx) ||
+	    TARGET_IS_LIKEWISE(tctx)) {
 		/* XP incorrectly breaks to level2. */
 		CHECK_VAL(break_info.count, 1);
 		CHECK_VAL(break_info.level, OPLOCK_BREAK_TO_LEVEL_II);
@@ -824,7 +830,7 @@ static bool test_raw_oplock_exclusive7(struct torture_context *tctx,
 		/* XP already broke to level2. */
 		CHECK_VAL(break_info.failures, 0);
 		CHECK_VAL(break_info.count, 0);
-	} else if (TARGET_IS_W2K12(tctx)) {
+	} else if (TARGET_IS_W2K12(tctx) || TARGET_IS_LIKEWISE(tctx)) {
 		/* no break */
 		CHECK_VAL(break_info.count, 0);
 		CHECK_VAL(break_info.level, 0);
@@ -2768,7 +2774,8 @@ static bool test_raw_oplock_batch19(struct torture_context *tctx, struct smbcli_
 
 	CHECK_VAL(break_info.failures, 0);
 
-	if (TARGET_IS_WINXP(tctx) || TARGET_IS_W2K12(tctx)) {
+	if (TARGET_IS_WINXP(tctx) || TARGET_IS_W2K12(tctx) ||
+	    TARGET_IS_LIKEWISE(tctx)) {
 		/* Win XP breaks to level2. */
 		CHECK_VAL(break_info.count, 1);
 		CHECK_VAL(break_info.level, OPLOCK_BREAK_TO_LEVEL_II);
@@ -3130,7 +3137,8 @@ static bool test_raw_oplock_batch20(struct torture_context *tctx, struct smbcli_
 	torture_wait_for_oplock_break(tctx);
 	CHECK_VAL(break_info.failures, 0);
 
-	if (TARGET_IS_WINXP(tctx) || TARGET_IS_W2K12(tctx)) {
+	if (TARGET_IS_WINXP(tctx) || TARGET_IS_W2K12(tctx) ||
+	    TARGET_IS_LIKEWISE(tctx)) {
 		/* Win XP breaks to level2. */
 		CHECK_VAL(break_info.count, 1);
 		CHECK_VAL(break_info.level, OPLOCK_BREAK_TO_LEVEL_II);
@@ -3848,7 +3856,7 @@ static bool test_raw_oplock_stream1(struct torture_context *tctx,
 
 		if (open_base_file) {
 			torture_comment(tctx, "Opening base file: %s with "
-			    "%d\n", fname_base, batch_req);
+			    "0x%x\n", fname_base, batch_req);
 			io.ntcreatex.in.fname = fname_base;
 			io.ntcreatex.in.flags = batch_req;
 			status = smb_raw_open(cli2->tree, tctx, &io);
@@ -3858,7 +3866,7 @@ static bool test_raw_oplock_stream1(struct torture_context *tctx,
 			base_fnum = io.ntcreatex.out.file.fnum;
 		}
 
-		torture_comment(tctx, "%d: Opening stream: %s with %d\n", i,
+		torture_comment(tctx, "%d: Opening stream: %s with 0x%x\n", i,
 		    fname, oplock_req);
 		io.ntcreatex.in.fname = fname;
 		io.ntcreatex.in.flags = oplock_req;
@@ -3866,6 +3874,8 @@ static bool test_raw_oplock_stream1(struct torture_context *tctx,
 		/* Do the open with the desired oplock on the stream. */
 		status = smb_raw_open(cli1->tree, tctx, &io);
 		CHECK_STATUS(tctx, status, NT_STATUS_OK);
+		torture_comment(tctx, "%d: Oplock Granted: 0x%x, Wanted 0x%x\n",
+		    i, io.ntcreatex.out.oplock_level, oplock_granted);
 		CHECK_VAL(io.ntcreatex.out.oplock_level, oplock_granted);
 		smbcli_close(cli1->tree, io.ntcreatex.out.file.fnum);
 
@@ -3876,7 +3886,7 @@ static bool test_raw_oplock_stream1(struct torture_context *tctx,
 	}
 
 	/* Open the stream with an exclusive oplock. */
-	torture_comment(tctx, "Opening stream: %s with %d\n",
+	torture_comment(tctx, "Opening stream: %s with 0x%x\n",
 	    fname_stream, exclusive_req);
 	io.ntcreatex.in.fname = fname_stream;
 	io.ntcreatex.in.flags = exclusive_req;
@@ -3888,7 +3898,7 @@ static bool test_raw_oplock_stream1(struct torture_context *tctx,
 	/* Open the base file and see if it contends. */
 	ZERO_STRUCT(break_info);
 	torture_comment(tctx, "Opening base file: %s with "
-	    "%d\n", fname_base, batch_req);
+	    "0x%x\n", fname_base, batch_req);
 	io.ntcreatex.in.fname = fname_base;
 	io.ntcreatex.in.flags = batch_req;
 	status = smb_raw_open(cli2->tree, tctx, &io);
@@ -3904,7 +3914,7 @@ static bool test_raw_oplock_stream1(struct torture_context *tctx,
 	/* Open the stream again to see if it contends. */
 	ZERO_STRUCT(break_info);
 	torture_comment(tctx, "Opening stream again: %s with "
-	    "%d\n", fname_base, batch_req);
+	    "0x%x\n", fname_base, batch_req);
 	io.ntcreatex.in.fname = fname_stream;
 	io.ntcreatex.in.flags = exclusive_req;
 	status = smb_raw_open(cli2->tree, tctx, &io);
