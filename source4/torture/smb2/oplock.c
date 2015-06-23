@@ -494,7 +494,7 @@ static bool test_smb2_oplock_exclusive2(struct torture_context *tctx,
 
 	torture_comment(tctx, "close both handles\n");
 	smb2_util_close(tree1, h1);
-	smb2_util_close(tree1, h2);
+	smb2_util_close(tree2, h2);
 	smb2_util_close(tree1, h);
 
 	smb2_deltree(tree1, BASEDIR);
