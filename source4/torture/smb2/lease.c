@@ -620,33 +620,34 @@ struct lease_upgrade3_test {
 	const char *held2;
 	const char *upgrade_to;
 	const char *upgraded_to;
+	const char *autofallback_upgraded_to;
 };
 
 #define NUM_UPGRADE3_TESTS ( 20 )
 struct lease_upgrade3_test lease_upgrade3_tests[NUM_UPGRADE3_TESTS] = {
-	{"R", "R", "", "R" },
-	{"R", "R", "R", "R" },
-	{"R", "R", "RW", "R" },
-	{"R", "R", "RH", "RH" },
-	{"R", "R", "RHW", "R" },
+	{"R", "R", "", "R", "R" },
+	{"R", "R", "R", "R", "R" },
+	{"R", "R", "RW", "R", "R" },
+	{"R", "R", "RH", "RH", "RH" },
+	{"R", "R", "RHW", "R", "RH" },
 
-	{"R", "RH", "", "R" },
-	{"R", "RH", "R", "R" },
-	{"R", "RH", "RW", "R" },
-	{"R", "RH", "RH", "RH" },
-	{"R", "RH", "RHW", "R" },
+	{"R", "RH", "", "R", "R" },
+	{"R", "RH", "R", "R", "R" },
+	{"R", "RH", "RW", "R", "R" },
+	{"R", "RH", "RH", "RH", "RH" },
+	{"R", "RH", "RHW", "R", "RH" },
 
-	{"RH", "R", "", "RH" },
-	{"RH", "R", "R", "RH" },
-	{"RH", "R", "RW", "RH" },
-	{"RH", "R", "RH", "RH" },
-	{"RH", "R", "RHW", "RH" },
+	{"RH", "R", "", "RH", "RH" },
+	{"RH", "R", "R", "RH", "RH" },
+	{"RH", "R", "RW", "RH", "RH" },
+	{"RH", "R", "RH", "RH", "RH" },
+	{"RH", "R", "RHW", "RH", "RH" },
 
-	{"RH", "RH", "", "RH" },
-	{"RH", "RH", "R", "RH" },
-	{"RH", "RH", "RW", "RH" },
-	{"RH", "RH", "RH", "RH" },
-	{"RH", "RH", "RHW", "RH" },
+	{"RH", "RH", "", "RH", "RH" },
+	{"RH", "RH", "R", "RH", "RH" },
+	{"RH", "RH", "RW", "RH", "RH" },
+	{"RH", "RH", "RH", "RH", "RH" },
+	{"RH", "RH", "RHW", "RH", "RH" },
 };
 
 static bool test_lease_upgrade3(struct torture_context *tctx,
@@ -704,7 +705,11 @@ static bool test_lease_upgrade3(struct torture_context *tctx,
 		status = smb2_create(tree, mem_ctx, &io);
 		CHECK_STATUS(status, NT_STATUS_OK);
 		CHECK_CREATED(&io, EXISTED, FILE_ATTRIBUTE_ARCHIVE);
-		CHECK_LEASE(&io, t.upgraded_to, true, LEASE1, 0);
+		if (TARGET_IS_LIKEWISE(tctx)) {
+			CHECK_LEASE(&io, t.autofallback_upgraded_to, true, LEASE1, 0);
+		} else {
+			CHECK_LEASE(&io, t.upgraded_to, true, LEASE1, 0);
+		}
 		hnew = io.out.file.handle;
 
 		/* no break has happened */
@@ -883,7 +888,15 @@ static bool test_lease_break(struct torture_context *tctx,
 		CHECK_STATUS(status, NT_STATUS_OK);
 		h3 = io.out.file.handle;
 		CHECK_CREATED(&io, EXISTED, FILE_ATTRIBUTE_ARCHIVE);
-		CHECK_LEASE(&io, brokento, true, LEASE1, 0);
+		if (TARGET_IS_LIKEWISE(tctx)) {
+			/*
+			 * Likewise will fallback and retry with RH,
+			 * yeilding an RH lease in all cases.
+			 */
+			CHECK_LEASE(&io, "RH", true, LEASE1, 0);
+		} else {
+			CHECK_LEASE(&io, brokento, true, LEASE1, 0);
+		}
 		CHECK_VAL(break_info.count, 0);
 		CHECK_VAL(break_info.failures, 0);
 
@@ -2119,6 +2132,9 @@ static bool test_lease_breaking2(struct torture_context *tctx,
 
 	torture_assert(tctx, req2->state == SMB2_REQUEST_RECV, "req2 pending");
 
+	/* Give server 500ms to send an interim response. */
+	smb_msleep(500);
+	
 	/*
 	 * We ack the lease break.
 	 */
@@ -2155,7 +2171,7 @@ static bool test_lease_breaking2(struct torture_context *tctx,
 	CHECK_STATUS(status, NT_STATUS_REQUEST_NOT_ACCEPTED);
 
 	/* Try again with the correct state this time. */
-	ack.in.lease.lease_state = SMB2_LEASE_NONE;;
+	ack.in.lease.lease_state = SMB2_LEASE_NONE;
 	status = smb2_lease_break_ack(tree, &ack);
 	CHECK_STATUS(status, NT_STATUS_OK);
 	CHECK_LEASE_BREAK_ACK(&ack, "", LEASE1);
@@ -2307,11 +2323,19 @@ static bool test_lease_breaking3(struct torture_context *tctx,
 	CHECK_STATUS(status, NT_STATUS_OK);
 	CHECK_LEASE_BREAK_ACK(&ack, "RH", LEASE1);
 
-	/*
-	 * We got an additional break downgrading to just "R"
-	 * while we defer the ack.
-	 */
-	CHECK_BREAK_INFO("RH", "R", LEASE1);
+	if (TARGET_IS_LIKEWISE(tctx)) {
+		/*
+		 * Likewise breaks directly to None.
+		 */
+		CHECK_BREAK_INFO("RH", "", LEASE1);
+	} else {
+
+		/*
+		 * We got an additional break downgrading to just "R"
+		 * while we defer the ack.
+		 */
+		CHECK_BREAK_INFO("RH", "R", LEASE1);
+	}
 
 	ack.in.lease.lease_key =
 		break_info.lease_break.current_lease.lease_key;
@@ -2335,17 +2359,29 @@ static bool test_lease_breaking3(struct torture_context *tctx,
 	torture_assert(tctx, req2->state == SMB2_REQUEST_RECV, "req2 pending");
 	torture_assert(tctx, req3->state == SMB2_REQUEST_RECV, "req3 pending");
 
-	/*
-	 * We ack the downgrade to "R" and get an immediate break to none
-	 */
-	status = smb2_lease_break_ack(tree, &ack);
-	CHECK_STATUS(status, NT_STATUS_OK);
-	CHECK_LEASE_BREAK_ACK(&ack, "R", LEASE1);
+	/* Give server 500ms to send an interim response. */
+	smb_msleep(500);
 
-	/*
-	 * We get the downgrade to none.
-	 */
-	CHECK_BREAK_INFO("R", "", LEASE1);
+	if (TARGET_IS_LIKEWISE(tctx)) {
+		/*
+		 * We ack the downgrade to none
+		 */
+		status = smb2_lease_break_ack(tree, &ack);
+		CHECK_STATUS(status, NT_STATUS_OK);
+		CHECK_LEASE_BREAK_ACK(&ack, "", LEASE1);
+	} else {
+		/*
+		 * We ack the downgrade to "R" and get an immediate break to none
+		 */
+		status = smb2_lease_break_ack(tree, &ack);
+		CHECK_STATUS(status, NT_STATUS_OK);
+		CHECK_LEASE_BREAK_ACK(&ack, "R", LEASE1);
+
+		/*
+		 * We get the downgrade to none.
+		 */
+		CHECK_BREAK_INFO("R", "", LEASE1);
+	}
 
 	torture_assert(tctx, req2->cancel.can_cancel,
 		       "req2 can_cancel");
@@ -2539,6 +2575,9 @@ static bool test_lease_v2_breaking3(struct torture_context *tctx,
 	torture_assert(tctx, req2->state == SMB2_REQUEST_RECV, "req2 pending");
 	torture_assert(tctx, req3->state == SMB2_REQUEST_RECV, "req3 pending");
 
+	/* Give server 500ms to send an interim response. */
+	smb_msleep(500);
+	
 	/*
 	 * We ack the downgrade to "R" and get an immediate break to none
 	 */
@@ -2927,6 +2966,9 @@ static bool test_lease_breaking6(struct torture_context *tctx,
 
 	torture_assert(tctx, req2->state == SMB2_REQUEST_RECV, "req2 pending");
 
+	/* Give server 500ms to send an interim response. */
+	smb_msleep(500);
+	
 	/*
 	 * We are asked to break to "RH", but we are allowed to
 	 * break to any of "RH", "R" or NONE.
