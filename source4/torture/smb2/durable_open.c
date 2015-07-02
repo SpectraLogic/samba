@@ -25,6 +25,7 @@
 #include "libcli/smb2/smb2_calls.h"
 #include "../libcli/smb/smbXcli_base.h"
 #include "torture/torture.h"
+#include "torture/util.h"
 #include "torture/smb2/proto.h"
 #include "../libcli/smb/smbXcli_base.h"
 
@@ -61,7 +62,7 @@
 #define CHECK_CREATED(__ctx, __io, __created, __attribute)		\
 	do {								\
 		CHECK_VAL((__io)->out.create_action, NTCREATEX_ACTION_ ## __created); \
-		if (torture_setting_bool(__ctx, "likewise", false))  {	\
+		if (TARGET_IS_LIKEWISE(tctx)) {				\
 			torture_warning(__ctx, 				\
 			"LIKEWISE: Ignoring allocation size check: expected %ld, received %ld", \
 			(__io)->out.alloc_size, torture_setting_ulong((__ctx), "fs_min_alloc_size", 0));\
@@ -406,7 +407,7 @@ static bool test_durable_open_reopen1(struct torture_context *tctx,
 	io2.in.durable_handle = h;
 
 	status = smb2_create(tree, mem_ctx, &io2);
-	if (torture_setting_bool(tctx, "likewise", false))  {
+	if (TARGET_IS_LIKEWISE(tctx)) {
 		torture_warning(tctx, 
 		"LIKEWISE: accepting NT_STATUS_OK rather than NT_STATUS_OBJECT_NAME_NOT_FOUND");
 		CHECK_STATUS(status, NT_STATUS_OK);
@@ -787,7 +788,21 @@ static bool test_durable_open_reopen2_lease(struct torture_context *tctx,
 	io.in.oplock_level = SMB2_OPLOCK_LEVEL_LEASE;
 
 	status = smb2_create(tree, mem_ctx, &io);
-	CHECK_STATUS(status, NT_STATUS_INVALID_PARAMETER);
+	if (!TARGET_IS_LIKEWISE(tctx)) {
+		/*
+		 * Per MS-SMB2 3.3.5.9.7, Likewise doesn't validate
+		 * the path name and thus succeeds in this case.
+		 * The relevent text in the durable handle reconnect
+		 * section is:
+		 *
+		 *     There is no processing done for "Path Name
+		 *     Validation" or "Open Execution" as listed in
+		 *     the (create processing) section above.
+		 */
+		CHECK_STATUS(status, NT_STATUS_OK);
+	} else {
+		CHECK_STATUS(status, NT_STATUS_INVALID_PARAMETER);
+	}
 
 	/*
 	 * Now for a succeeding reconnect:
@@ -1274,12 +1289,11 @@ static bool test_durable_open_reopen3(struct torture_context *tctx,
 
         /* MS_SMB2 section 3.3.7.1 says this should work */
         status = smb2_create(tree2, mem_ctx, &io2);
-        if (torture_setting_bool(tctx, "likewise", false)) {
-                torture_warning(tctx,
-                "LIKEWISE: accepting NT_STATUS_OK rather than NT_STATUS_OBJECT_NAME_NOT_FOUND");
-                CHECK_STATUS(status, NT_STATUS_OK);
-        }
-        else
+	if (TARGET_IS_LIKEWISE(tctx)) {
+		torture_warning(tctx,
+		"LIKEWISE: accepting NT_STATUS_OK rather than NT_STATUS_OBJECT_NAME_NOT_FOUND");
+		CHECK_STATUS(status, NT_STATUS_OK);
+	} else
 		CHECK_STATUS(status, NT_STATUS_OBJECT_NAME_NOT_FOUND);
 
 done:
@@ -1461,7 +1475,7 @@ static bool test_durable_open_delete_on_close1(struct torture_context *tctx,
 	CHECK_STATUS(status, NT_STATUS_OK);
 	_h = io2.out.file.handle;
 	h = &_h;
-	if (torture_setting_bool(tctx, "likewise", false)) {
+	if (TARGET_IS_LIKEWISE(tctx)) {
 		torture_warning(tctx, "LIKEWISE: EXISTED rather than CREATED");
 		CHECK_CREATED_SIZE(&io2, EXISTED, FILE_ATTRIBUTE_ARCHIVE, 
 			torture_setting_ulong(tctx, "fs_min_alloc_size", 0),
@@ -2405,12 +2419,11 @@ static bool test_durable_open_alloc_size(struct torture_context *tctx,
 	 * defined within IEEE Std 1003.1-2001. In some implementations it 
 	 * is 512 bytes. It may differ on a file system basis.  
 	 */
-	if ( ! torture_setting_bool(tctx, "likewise", false)) {
+	if (TARGET_IS_LIKEWISE(tctx)) {
+		torture_warning(tctx, "LIKEWISE: not checking fuzzy allocation math");
+	} else {
 		CHECK_CREATED_SIZE(&io, EXISTED, FILE_ATTRIBUTE_ARCHIVE,
 			   alloc_size_step * 2, alloc_size_step + 1);
-	}
-	else {
-		torture_warning(tctx, "LIKEWISE: not checking fuzzy allocation math");
 	}
 	CHECK_VAL(io.out.oplock_level, smb2_util_oplock_level("b"));
 	_h = io.out.file.handle;
