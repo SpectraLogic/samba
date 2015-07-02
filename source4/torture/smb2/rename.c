@@ -547,7 +547,7 @@ done:
 }
 
 /*
- * testing of rename when opening parent dir with no delete access and delete
+ * testing of rename when opening parent dir with no delete access and write 
  * sharing allowed
  * this should pass
  */
@@ -582,8 +582,7 @@ static bool torture_smb2_rename_no_delete_access(struct torture_context *torture
 		SEC_FILE_WRITE_DATA;
 	io.smb2.in.create_options = NTCREATEX_OPTIONS_DIRECTORY;
 	io.smb2.in.file_attributes = FILE_ATTRIBUTE_DIRECTORY;
-	io.smb2.in.share_access = NTCREATEX_SHARE_ACCESS_READ |
-		NTCREATEX_SHARE_ACCESS_WRITE | NTCREATEX_SHARE_ACCESS_DELETE;
+	io.smb2.in.share_access = NTCREATEX_SHARE_ACCESS_WRITE;
 	io.smb2.in.alloc_size = 0;
 	io.smb2.in.create_disposition = NTCREATEX_DISP_OPEN;
 	io.smb2.in.impersonation_level = SMB2_IMPERSONATION_ANONYMOUS;
@@ -684,7 +683,7 @@ done:
 /*
  * testing of rename with no delete access on parent dir
  * this is the negative case of the test above: parent dir is opened
- * without share_delete, so rename must fail
+ * without share_write, so rename must fail
  */
 
 static bool torture_smb2_rename_no_delete_access2(struct torture_context *torture,
