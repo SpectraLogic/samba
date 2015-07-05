@@ -645,11 +645,7 @@ static bool torture_smb2_notify_recursive(struct torture_context *torture,
 				BASEDIR "\\subdir-name\\subname1-r";
 	status = smb2_setinfo_file(tree2, &sinfo);
 	CHECK_STATUS(status, NT_STATUS_OK);
-
-	if (TARGET_IS_LIKEWISE(torture)) {
-		torture_warning(torture, "LIKEWISE: close required");
-		smb2_util_close(tree2, io1.smb2.out.file.handle);
-	}
+	smb2_util_close(tree2, io1.smb2.out.file.handle);
 
 	io1.smb2.in.create_options = NTCREATEX_OPTIONS_NON_DIRECTORY_FILE;
 	io1.smb2.in.fname = BASEDIR "\\subdir-name\\subname2";
@@ -663,6 +659,7 @@ static bool torture_smb2_notify_recursive(struct torture_context *torture,
 	sinfo.rename_information.in.new_name = BASEDIR "\\subname2-r";
 	status = smb2_setinfo_file(tree2, &sinfo);
 	CHECK_STATUS(status, NT_STATUS_OK);
+	smb2_util_close(tree2, io1.smb2.out.file.handle);
 
 	io1.smb2.in.fname = BASEDIR "\\subname2-r";
 	io1.smb2.in.create_disposition = NTCREATEX_DISP_OPEN;
@@ -676,6 +673,7 @@ static bool torture_smb2_notify_recursive(struct torture_context *torture,
 	sinfo.rename_information.in.new_name = BASEDIR "\\subname3-r";
 	status = smb2_setinfo_file(tree2, &sinfo);
 	CHECK_STATUS(status, NT_STATUS_OK);
+	smb2_util_close(tree2, io1.smb2.out.file.handle);
 
 	/*
 	 * The spec says that a filter of zero never returns until canceled or closed
@@ -734,6 +732,7 @@ static bool torture_smb2_notify_recursive(struct torture_context *torture,
 
 
 done:
+	smb2_util_close(tree1, h1);
 	smb2_deltree(tree1, BASEDIR);
 	return ret;
 }
@@ -959,8 +958,8 @@ check_notify(struct torture_context *torture,
 			}
 
 			if (ndiff->lw_recvd != ndiff->samba_notify) {
-				torture_warning(torture,
-				"LIKEWISE_FAILURE: "
+				torture_comment(torture,
+				"SPEC COMPLIANCE: "
 				"notification_difference "
 				"%s received 0x%x, samba expected 0x%x, "
 				"likewise expected 0x%x\n",
@@ -993,13 +992,7 @@ static  bool torture_smb2_notify_recursive_likewise_validate(
 				FILE_NOTIFY_CHANGE_ATTRIBUTES |
 				FILE_NOTIFY_CHANGE_CREATION);
 
-	/* XXX	work needed
-	 *	Likewise is no longer returning the notifications
-	 *	as described above.
-	 *
-	 * max_changes = 9
-	 */
-	max_changes = 8;
+	max_changes = 9;
 	while (num_changes < max_changes && ret == true) {
 		status = smb2_notify_recv(req1, torture, &(notify->smb2));
 		CHECK_STATUS(status, NT_STATUS_OK);
@@ -1040,9 +1033,6 @@ static  bool torture_smb2_notify_recursive_likewise_validate(
 		}
 		req1 = smb2_notify_send(tree1, &(notify->smb2));
 	}
-
-	/* test broken - force error */
-	ret = false;
 
 done:
 	return ret;
