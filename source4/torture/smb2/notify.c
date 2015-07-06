@@ -1459,7 +1459,7 @@ static bool torture_smb2_notify_mask(struct torture_context *torture,
 	torture_comment(torture, "Testing set path attribute\n");
 	NOTIFY_MASK_TEST("Testing set path attribute",
 		smb2_util_close(tree2, custom_smb2_create(tree2,
-				       torture, &(io.smb2)));,
+				       torture, &(io1.smb2)));,
 		smb2_util_setatr(tree2, BASEDIR "\\tname1",
 				 FILE_ATTRIBUTE_HIDDEN);,
 		smb2_util_unlink(tree2, BASEDIR "\\tname1");,
