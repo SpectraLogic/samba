@@ -4010,6 +4010,7 @@ struct torture_suite *torture_smb2_lease_init(void)
 	torture_suite_add_1smb2_test(suite, "nobreakself",
 				     test_lease_nobreakself);
 	torture_suite_add_1smb2_test(suite, "statopen", test_lease_statopen);
+	torture_suite_add_1smb2_test(suite, "multiopen", test_lease_multiopen);
 	torture_suite_add_1smb2_test(suite, "upgrade", test_lease_upgrade);
 	torture_suite_add_1smb2_test(suite, "upgrade2", test_lease_upgrade2);
 	torture_suite_add_1smb2_test(suite, "upgrade3", test_lease_upgrade3);
