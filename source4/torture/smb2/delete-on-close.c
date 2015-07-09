@@ -517,6 +517,713 @@ static bool test_doc_create_if_exist(struct torture_context *tctx, struct smb2_t
 }
 
 /*
+ * Test that parent directory open's share flags do not influence
+ * file delete on close behavior.
+ *
+ * PART 1: Testing of delete on close when opening parent dir with
+ *         no delete access and write sharing allowed.  The create
+ *         should succeed without error. 
+ */
+static bool test_doc_parent_share_write(struct torture_context *tctx, struct smb2_tree *tree)
+{
+	bool ret = true;
+	uint32_t perms = 0;
+	NTSTATUS status;
+	struct smb2_create io;
+	struct smb2_handle dh;
+
+	/* File should not exist for this first test, so make sure */
+	set_dir_delete_perms(tctx, tree);
+
+	smb2_deltree(tree, DNAME);
+
+	create_dir(tctx, tree);
+
+	set_dir_delete_perms(tctx, tree);
+
+	torture_comment(tctx, "Open parent directory with SHARE_WRITE\n");
+
+	perms = SEC_STD_SYNCHRONIZE | SEC_STD_WRITE_DAC |
+		SEC_STD_READ_CONTROL | SEC_FILE_WRITE_ATTRIBUTE |
+		SEC_FILE_READ_ATTRIBUTE | SEC_FILE_EXECUTE | SEC_FILE_WRITE_EA |
+		SEC_FILE_READ_EA | SEC_FILE_APPEND_DATA | SEC_FILE_READ_DATA |
+		SEC_FILE_WRITE_DATA;
+
+	ZERO_STRUCT(io);
+	io.in.desired_access	 = perms;
+	io.in.create_options	 = NTCREATEX_OPTIONS_DIRECTORY;
+	io.in.file_attributes	 = FILE_ATTRIBUTE_DIRECTORY;
+	io.in.share_access	 = NTCREATEX_SHARE_ACCESS_WRITE;
+	io.in.create_disposition = NTCREATEX_DISP_OPEN;
+	io.in.fname		 = DNAME;
+
+	status = smb2_create(tree, tctx, &(io));
+	CHECK_STATUS(status, NT_STATUS_OK);
+	dh = io.out.file.handle;
+
+	torture_comment(tctx, "Create non-existent file (OPEN_IF)\n");
+	torture_comment(tctx, "We expect NT_STATUS_OK\n");
+
+	perms = SEC_STD_SYNCHRONIZE | SEC_STD_READ_CONTROL | SEC_STD_DELETE | 
+		SEC_DIR_WRITE_ATTRIBUTE | SEC_DIR_READ_ATTRIBUTE | 
+		SEC_DIR_WRITE_EA | SEC_FILE_APPEND_DATA |
+		SEC_FILE_WRITE_DATA;
+
+	ZERO_STRUCT(io);
+	io.in.desired_access	 = perms;
+	io.in.file_attributes	 = 0;
+	io.in.create_disposition = NTCREATEX_DISP_OPEN_IF;
+	io.in.share_access	 = 0;
+	io.in.create_options     = NTCREATEX_OPTIONS_NON_DIRECTORY_FILE;
+	io.in.fname              = FNAME;
+
+	status = smb2_create(tree, tctx, &io);
+	CHECK_STATUS(status, NT_STATUS_OK);
+	status = smb2_util_close(tree, io.out.file.handle);
+
+	torture_comment(tctx, "Re-open file with DeleteOnClose (OPEN_IF)\n");
+	torture_comment(tctx, "We expect NT_STATUS_OK\n");
+
+	ZERO_STRUCT(io);
+	io.in.desired_access	 = perms;
+	io.in.file_attributes	 = 0;
+	io.in.create_disposition = NTCREATEX_DISP_OPEN;
+	io.in.share_access	 = NTCREATEX_SHARE_ACCESS_DELETE;
+	io.in.create_options     = NTCREATEX_OPTIONS_DELETE_ON_CLOSE | 
+				   NTCREATEX_OPTIONS_NON_DIRECTORY_FILE;
+	io.in.fname              = FNAME;
+
+	status = smb2_create(tree, tctx, &io);
+	CHECK_STATUS(status, NT_STATUS_OK);
+
+	status = smb2_util_close(tree, io.out.file.handle);
+
+	/* Check it was deleted */
+	ZERO_STRUCT(io);
+	io.in.desired_access	 = perms;
+	io.in.file_attributes	 = 0;
+	io.in.create_disposition = NTCREATEX_DISP_OPEN;
+	io.in.share_access	 = NTCREATEX_SHARE_ACCESS_DELETE;
+	io.in.create_options     = 0;
+	io.in.fname              = FNAME;
+
+	torture_comment(tctx, "Testing if the file was deleted when closed\n");
+	torture_comment(tctx, "We expect NT_STATUS_OBJECT_NAME_NOT_FOUND\n");
+
+	status = smb2_create(tree, tctx, &io);
+	CHECK_STATUS(status, NT_STATUS_OBJECT_NAME_NOT_FOUND);
+
+	torture_comment(tctx, "Closing directory\n");
+
+	status = smb2_util_close(tree, dh);
+
+	return ret;
+}
+
+/*
+ * Test that parent directory open's share flags do not influence
+ * file delete on close behavior.
+ *
+ * PART 2: Testing of delete on close when opening parent dir with
+ *         no delete access and no write sharing allowed.  The create
+ *         should succeed without error.
+ */
+static bool test_doc_parent_no_share_write(struct torture_context *tctx, struct smb2_tree *tree)
+{
+	bool ret = true;
+	uint32_t perms = 0;
+	NTSTATUS status;
+	struct smb2_create io;
+	struct smb2_handle dh;
+
+	/* File should not exist for this first test, so make sure */
+	set_dir_delete_perms(tctx, tree);
+
+	smb2_deltree(tree, DNAME);
+
+	create_dir(tctx, tree);
+
+	set_dir_delete_perms(tctx, tree);
+
+	torture_comment(tctx, "Open parent directory without SHARE_WRITE\n");
+
+	perms = SEC_STD_SYNCHRONIZE | SEC_STD_WRITE_DAC |
+		SEC_STD_READ_CONTROL | SEC_FILE_WRITE_ATTRIBUTE |
+		SEC_FILE_READ_ATTRIBUTE | SEC_FILE_EXECUTE | SEC_FILE_WRITE_EA |
+		SEC_FILE_READ_EA | SEC_FILE_APPEND_DATA | SEC_FILE_READ_DATA |
+		SEC_FILE_WRITE_DATA;
+
+	ZERO_STRUCT(io);
+	io.in.desired_access	 = perms;
+	io.in.create_options	 = NTCREATEX_OPTIONS_DIRECTORY;
+	io.in.file_attributes	 = FILE_ATTRIBUTE_DIRECTORY;
+	io.in.share_access	 = 0;
+	io.in.create_disposition = NTCREATEX_DISP_OPEN;
+	io.in.fname		 = DNAME;
+
+	status = smb2_create(tree, tctx, &(io));
+	CHECK_STATUS(status, NT_STATUS_OK);
+	dh = io.out.file.handle;
+
+	torture_comment(tctx, "Create non-existent file (OPEN_IF)\n");
+	torture_comment(tctx, "We expect NT_STATUS_OK\n");
+
+	perms = SEC_STD_SYNCHRONIZE | SEC_STD_READ_CONTROL | SEC_STD_DELETE | 
+		SEC_DIR_WRITE_ATTRIBUTE | SEC_DIR_READ_ATTRIBUTE | 
+		SEC_DIR_WRITE_EA | SEC_FILE_APPEND_DATA |
+		SEC_FILE_WRITE_DATA;
+
+	ZERO_STRUCT(io);
+	io.in.desired_access	 = perms;
+	io.in.file_attributes	 = 0;
+	io.in.create_disposition = NTCREATEX_DISP_OPEN_IF;
+	io.in.share_access	 = 0;
+	io.in.create_options     = NTCREATEX_OPTIONS_NON_DIRECTORY_FILE;
+	io.in.fname              = FNAME;
+
+	status = smb2_create(tree, tctx, &io);
+	CHECK_STATUS(status, NT_STATUS_OK);
+	status = smb2_util_close(tree, io.out.file.handle);
+
+	torture_comment(tctx, "Re-open file with DeleteOnClose (OPEN_IF)\n");
+	torture_comment(tctx, "We expect NT_STATUS_OK\n");
+
+	ZERO_STRUCT(io);
+	io.in.desired_access	 = perms;
+	io.in.file_attributes	 = 0;
+	io.in.create_disposition = NTCREATEX_DISP_OPEN_IF;
+	io.in.share_access	 = NTCREATEX_SHARE_ACCESS_DELETE;
+	io.in.create_options     = NTCREATEX_OPTIONS_DELETE_ON_CLOSE | 
+				   NTCREATEX_OPTIONS_NON_DIRECTORY_FILE;
+	io.in.fname              = FNAME;
+
+	status = smb2_create(tree, tctx, &io);
+	CHECK_STATUS(status, NT_STATUS_OK);
+
+	status = smb2_util_close(tree, io.out.file.handle);
+
+	/* Check it was deleted */
+	ZERO_STRUCT(io);
+	io.in.desired_access	 = perms;
+	io.in.file_attributes	 = 0;
+	io.in.create_disposition = NTCREATEX_DISP_OPEN;
+	io.in.share_access	 = NTCREATEX_SHARE_ACCESS_DELETE;
+	io.in.create_options     = 0;
+	io.in.fname              = FNAME;
+
+	torture_comment(tctx, "Testing if the file was deleted when closed\n");
+	torture_comment(tctx, "We expect NT_STATUS_OBJECT_NAME_NOT_FOUND\n");
+
+	status = smb2_create(tree, tctx, &io);
+	CHECK_STATUS(status, NT_STATUS_OBJECT_NAME_NOT_FOUND);
+
+	torture_comment(tctx, "Closing directory\n");
+	status = smb2_util_close(tree, dh);
+	return ret;
+}
+
+/*
+ * Test that a directory's delete on close flag is ignored if the directory
+ * is not empty at the time of open.
+ *
+ * PART 1: Add a file to the directory. Open directory with delete on close.
+ *         Close directory handle. Directory should not be deleted.
+ */
+static bool test_doc_directory(struct torture_context *tctx, struct smb2_tree *tree)
+{
+	bool ret = true;
+	uint32_t perms = 0;
+	NTSTATUS status;
+	struct smb2_create io;
+	struct smb2_handle dh;
+
+	/* File should not exist for this first test, so make sure */
+	set_dir_delete_perms(tctx, tree);
+
+	smb2_deltree(tree, DNAME);
+
+	torture_comment(tctx, "Create directory.\n");
+
+	create_dir(tctx, tree);
+
+	set_dir_delete_perms(tctx, tree);
+
+	torture_comment(tctx, "Add a file.\n");
+
+	perms = SEC_STD_SYNCHRONIZE | SEC_STD_READ_CONTROL | SEC_STD_DELETE | 
+		SEC_DIR_WRITE_ATTRIBUTE | SEC_DIR_READ_ATTRIBUTE | 
+		SEC_DIR_WRITE_EA | SEC_FILE_APPEND_DATA |
+		SEC_FILE_WRITE_DATA;
+
+	ZERO_STRUCT(io);
+	io.in.desired_access	 = perms;
+	io.in.file_attributes	 = 0;
+	io.in.create_disposition = NTCREATEX_DISP_OPEN_IF;
+	io.in.share_access	 = 0;
+	io.in.create_options     = NTCREATEX_OPTIONS_NON_DIRECTORY_FILE;
+	io.in.fname              = FNAME;
+
+	status = smb2_create(tree, tctx, &io);
+	CHECK_STATUS(status, NT_STATUS_OK);
+	status = smb2_util_close(tree, io.out.file.handle);
+
+	torture_comment(tctx, "Open directory with DELETE_ON_CLOSE\n");
+
+	perms = SEC_STD_SYNCHRONIZE | SEC_STD_WRITE_DAC |
+		SEC_STD_READ_CONTROL | SEC_FILE_WRITE_ATTRIBUTE |
+		SEC_FILE_READ_ATTRIBUTE | SEC_FILE_EXECUTE | SEC_FILE_WRITE_EA |
+		SEC_FILE_READ_EA | SEC_FILE_APPEND_DATA | SEC_FILE_READ_DATA |
+		SEC_FILE_WRITE_DATA;
+
+	ZERO_STRUCT(io);
+	io.in.desired_access	 = perms;
+	io.in.create_options	 = NTCREATEX_OPTIONS_DIRECTORY;
+	io.in.file_attributes	 = FILE_ATTRIBUTE_DIRECTORY;
+	io.in.share_access	 = 0;
+	io.in.create_disposition = NTCREATEX_DISP_OPEN;
+	io.in.fname		 = DNAME;
+
+	status = smb2_create(tree, tctx, &(io));
+	CHECK_STATUS(status, NT_STATUS_OK);
+
+	torture_comment(tctx, "Close directory handle.\n");
+	status = smb2_util_close(tree, io.out.file.handle);
+
+	torture_comment(tctx, "Re-open directory. We expect NT_STATUS_OK\n");
+
+	perms = SEC_STD_SYNCHRONIZE | SEC_STD_WRITE_DAC |
+		SEC_STD_READ_CONTROL | SEC_FILE_WRITE_ATTRIBUTE |
+		SEC_FILE_READ_ATTRIBUTE | SEC_FILE_EXECUTE | SEC_FILE_WRITE_EA |
+		SEC_FILE_READ_EA | SEC_FILE_APPEND_DATA | SEC_FILE_READ_DATA |
+		SEC_FILE_WRITE_DATA;
+
+	ZERO_STRUCT(io);
+	io.in.desired_access	 = perms;
+	io.in.create_options	 = NTCREATEX_OPTIONS_DIRECTORY;
+	io.in.file_attributes	 = FILE_ATTRIBUTE_DIRECTORY;
+	io.in.share_access	 = 0;
+	io.in.create_disposition = NTCREATEX_DISP_OPEN;
+	io.in.fname		 = DNAME;
+
+	status = smb2_create(tree, tctx, &(io));
+	CHECK_STATUS(status, NT_STATUS_OK);
+
+	return ret;
+}
+
+/*
+ * Test that a directory's delete on close flag is ignored if the directory
+ * is not empty at the time of open.
+ *
+ * PART 2: Add a file to the directory, open directory for delete, delete
+ *         child file, close directory handle.  Directory should not be
+ *         deleted.
+ */
+static bool test_doc_directory2(struct torture_context *tctx, struct smb2_tree *tree)
+{
+	bool ret = true;
+	uint32_t perms = 0;
+	NTSTATUS status;
+	struct smb2_create io;
+	struct smb2_handle dh;
+
+	/* File should not exist for this first test, so make sure */
+	set_dir_delete_perms(tctx, tree);
+
+	smb2_deltree(tree, DNAME);
+
+	torture_comment(tctx, "Create directory.\n");
+
+	create_dir(tctx, tree);
+
+	set_dir_delete_perms(tctx, tree);
+
+	torture_comment(tctx, "Add a file.\n");
+
+	perms = SEC_STD_SYNCHRONIZE | SEC_STD_READ_CONTROL | SEC_STD_DELETE | 
+		SEC_DIR_WRITE_ATTRIBUTE | SEC_DIR_READ_ATTRIBUTE | 
+		SEC_DIR_WRITE_EA | SEC_FILE_APPEND_DATA |
+		SEC_FILE_WRITE_DATA;
+
+	ZERO_STRUCT(io);
+	io.in.desired_access	 = perms;
+	io.in.file_attributes	 = 0;
+	io.in.create_disposition = NTCREATEX_DISP_OPEN_IF;
+	io.in.share_access	 = 0;
+	io.in.create_options     = NTCREATEX_OPTIONS_NON_DIRECTORY_FILE;
+	io.in.fname              = FNAME;
+
+	status = smb2_create(tree, tctx, &io);
+	CHECK_STATUS(status, NT_STATUS_OK);
+	status = smb2_util_close(tree, io.out.file.handle);
+
+	torture_comment(tctx, "Open directory with DELETE_ON_CLOSE\n");
+
+	perms = SEC_STD_SYNCHRONIZE | SEC_STD_WRITE_DAC |
+		SEC_STD_READ_CONTROL | SEC_FILE_WRITE_ATTRIBUTE |
+		SEC_FILE_READ_ATTRIBUTE | SEC_FILE_EXECUTE | SEC_FILE_WRITE_EA |
+		SEC_FILE_READ_EA | SEC_FILE_APPEND_DATA | SEC_FILE_READ_DATA |
+		SEC_FILE_WRITE_DATA;
+
+	ZERO_STRUCT(io);
+	io.in.desired_access	 = perms;
+	io.in.create_options	 = NTCREATEX_OPTIONS_DIRECTORY;
+	io.in.file_attributes	 = FILE_ATTRIBUTE_DIRECTORY;
+	io.in.share_access	 = 0;
+	io.in.create_disposition = NTCREATEX_DISP_OPEN;
+	io.in.fname		 = DNAME;
+
+	status = smb2_create(tree, tctx, &(io));
+	CHECK_STATUS(status, NT_STATUS_OK);
+	dh = io.out.file.handle;
+
+	torture_comment(tctx, "Delete file..\n");
+
+	perms = SEC_STD_SYNCHRONIZE | SEC_STD_WRITE_DAC | SEC_STD_DELETE |
+		SEC_STD_READ_CONTROL | SEC_FILE_WRITE_ATTRIBUTE |
+		SEC_FILE_READ_ATTRIBUTE | SEC_FILE_EXECUTE | SEC_FILE_WRITE_EA |
+		SEC_FILE_READ_EA | SEC_FILE_APPEND_DATA | SEC_FILE_READ_DATA |
+		SEC_FILE_WRITE_DATA;
+
+	ZERO_STRUCT(io);
+	io.in.desired_access	 = perms;
+	io.in.file_attributes	 = 0;
+	io.in.create_disposition = NTCREATEX_DISP_OPEN_IF;
+	io.in.share_access	 = NTCREATEX_SHARE_ACCESS_DELETE;
+	io.in.create_options     = NTCREATEX_OPTIONS_DELETE_ON_CLOSE | 
+				   NTCREATEX_OPTIONS_NON_DIRECTORY_FILE;
+	io.in.fname              = FNAME;
+
+	status = smb2_create(tree, tctx, &io);
+	CHECK_STATUS(status, NT_STATUS_OK);
+
+	status = smb2_util_close(tree, io.out.file.handle);
+
+	/* Check it was deleted */
+	ZERO_STRUCT(io);
+	io.in.desired_access	 = perms;
+	io.in.file_attributes	 = 0;
+	io.in.create_disposition = NTCREATEX_DISP_OPEN;
+	io.in.share_access	 = NTCREATEX_SHARE_ACCESS_DELETE;
+	io.in.create_options     = 0;
+	io.in.fname              = FNAME;
+
+	torture_comment(tctx, "Testing if the file was deleted when closed\n");
+	torture_comment(tctx, "We expect NT_STATUS_OBJECT_NAME_NOT_FOUND\n");
+
+	status = smb2_create(tree, tctx, &io);
+	CHECK_STATUS(status, NT_STATUS_OBJECT_NAME_NOT_FOUND);
+
+	torture_comment(tctx, "Close directory handle.\n");
+	status = smb2_util_close(tree, dh);
+
+	torture_comment(tctx, "Re-open directory. We expect NT_STATUS_OK\n");
+
+	perms = SEC_STD_SYNCHRONIZE | SEC_STD_WRITE_DAC |
+		SEC_STD_READ_CONTROL | SEC_FILE_WRITE_ATTRIBUTE |
+		SEC_FILE_READ_ATTRIBUTE | SEC_FILE_EXECUTE | SEC_FILE_WRITE_EA |
+		SEC_FILE_READ_EA | SEC_FILE_APPEND_DATA | SEC_FILE_READ_DATA |
+		SEC_FILE_WRITE_DATA;
+
+	ZERO_STRUCT(io);
+	io.in.desired_access	 = perms;
+	io.in.create_options	 = NTCREATEX_OPTIONS_DIRECTORY;
+	io.in.file_attributes	 = FILE_ATTRIBUTE_DIRECTORY;
+	io.in.share_access	 = 0;
+	io.in.create_disposition = NTCREATEX_DISP_OPEN;
+	io.in.fname		 = DNAME;
+
+	status = smb2_create(tree, tctx, &(io));
+	CHECK_STATUS(status, NT_STATUS_OK);
+
+	return ret;
+}
+
+/*
+ * Test that a directory's delete on close flag is ignored if the directory
+ * is not empty at the time of open.
+ *
+ * PART 3: Add a file to the directory, open file with delete on close,
+ *         open directory with delete on close, close file handle (file
+ *         is now deleted), close directory handle.  Directory should not
+ *         be deleted.
+ */
+static bool test_doc_directory3(struct torture_context *tctx, struct smb2_tree *tree)
+{
+	bool ret = true;
+	uint32_t perms = 0;
+	NTSTATUS status;
+	struct smb2_create io;
+	struct smb2_handle dh;
+	struct smb2_handle fh;
+
+	/* File should not exist for this first test, so make sure */
+	set_dir_delete_perms(tctx, tree);
+
+	smb2_deltree(tree, DNAME);
+
+	torture_comment(tctx, "Create directory.\n");
+
+	create_dir(tctx, tree);
+
+	set_dir_delete_perms(tctx, tree);
+
+	torture_comment(tctx, "Add a file.\n");
+
+	perms = SEC_STD_SYNCHRONIZE | SEC_STD_READ_CONTROL | SEC_STD_DELETE | 
+		SEC_DIR_WRITE_ATTRIBUTE | SEC_DIR_READ_ATTRIBUTE | 
+		SEC_DIR_WRITE_EA | SEC_FILE_APPEND_DATA |
+		SEC_FILE_WRITE_DATA;
+
+	ZERO_STRUCT(io);
+	io.in.desired_access	 = perms;
+	io.in.file_attributes	 = 0;
+	io.in.create_disposition = NTCREATEX_DISP_OPEN_IF;
+	io.in.share_access	 = 0;
+	io.in.create_options     = NTCREATEX_OPTIONS_NON_DIRECTORY_FILE;
+	io.in.fname              = FNAME;
+
+	status = smb2_create(tree, tctx, &io);
+	CHECK_STATUS(status, NT_STATUS_OK);
+	status = smb2_util_close(tree, io.out.file.handle);
+
+	torture_comment(tctx, "Open file delete on close, but do not close\n");
+
+	perms = SEC_STD_SYNCHRONIZE | SEC_STD_WRITE_DAC | SEC_STD_DELETE |
+		SEC_STD_READ_CONTROL | SEC_FILE_WRITE_ATTRIBUTE |
+		SEC_FILE_READ_ATTRIBUTE | SEC_FILE_EXECUTE | SEC_FILE_WRITE_EA |
+		SEC_FILE_READ_EA | SEC_FILE_APPEND_DATA | SEC_FILE_READ_DATA |
+		SEC_FILE_WRITE_DATA;
+
+	ZERO_STRUCT(io);
+	io.in.desired_access	 = perms;
+	io.in.file_attributes	 = 0;
+	io.in.create_disposition = NTCREATEX_DISP_OPEN_IF;
+	io.in.share_access	 = NTCREATEX_SHARE_ACCESS_DELETE;
+	io.in.create_options     = NTCREATEX_OPTIONS_DELETE_ON_CLOSE | 
+				   NTCREATEX_OPTIONS_NON_DIRECTORY_FILE;
+	io.in.fname              = FNAME;
+
+	status = smb2_create(tree, tctx, &io);
+	CHECK_STATUS(status, NT_STATUS_OK);
+	fh = io.out.file.handle;
+
+	torture_comment(tctx, "Open directory with DELETE_ON_CLOSE\n");
+
+	perms = SEC_STD_SYNCHRONIZE | SEC_STD_WRITE_DAC |
+		SEC_STD_READ_CONTROL | SEC_FILE_WRITE_ATTRIBUTE |
+		SEC_FILE_READ_ATTRIBUTE | SEC_FILE_EXECUTE | SEC_FILE_WRITE_EA |
+		SEC_FILE_READ_EA | SEC_FILE_APPEND_DATA | SEC_FILE_READ_DATA |
+		SEC_FILE_WRITE_DATA;
+
+	ZERO_STRUCT(io);
+	io.in.desired_access	 = perms;
+	io.in.create_options	 = NTCREATEX_OPTIONS_DIRECTORY;
+	io.in.file_attributes	 = FILE_ATTRIBUTE_DIRECTORY;
+	io.in.share_access	 = 0;
+	io.in.create_disposition = NTCREATEX_DISP_OPEN;
+	io.in.fname		 = DNAME;
+
+	status = smb2_create(tree, tctx, &(io));
+	CHECK_STATUS(status, NT_STATUS_OK);
+	dh = io.out.file.handle;
+
+	torture_comment(tctx, "Close file handle.\n");
+	status = smb2_util_close(tree, fh);
+
+	/* Check it was deleted */
+	ZERO_STRUCT(io);
+	io.in.desired_access	 = perms;
+	io.in.file_attributes	 = 0;
+	io.in.create_disposition = NTCREATEX_DISP_OPEN;
+	io.in.share_access	 = NTCREATEX_SHARE_ACCESS_DELETE;
+	io.in.create_options     = 0;
+	io.in.fname              = FNAME;
+
+	torture_comment(tctx, "Testing if the file was deleted when closed\n");
+	torture_comment(tctx, "We expect NT_STATUS_OBJECT_NAME_NOT_FOUND\n");
+
+	status = smb2_create(tree, tctx, &io);
+	CHECK_STATUS(status, NT_STATUS_OBJECT_NAME_NOT_FOUND);
+
+	torture_comment(tctx, "Close directory handle.\n");
+	status = smb2_util_close(tree, dh);
+
+	torture_comment(tctx, "Re-open directory. We expect NT_STATUS_OK\n");
+
+	perms = SEC_STD_SYNCHRONIZE | SEC_STD_WRITE_DAC |
+		SEC_STD_READ_CONTROL | SEC_FILE_WRITE_ATTRIBUTE |
+		SEC_FILE_READ_ATTRIBUTE | SEC_FILE_EXECUTE | SEC_FILE_WRITE_EA |
+		SEC_FILE_READ_EA | SEC_FILE_APPEND_DATA | SEC_FILE_READ_DATA |
+		SEC_FILE_WRITE_DATA;
+
+	ZERO_STRUCT(io);
+	io.in.desired_access	 = perms;
+	io.in.create_options	 = NTCREATEX_OPTIONS_DIRECTORY;
+	io.in.file_attributes	 = FILE_ATTRIBUTE_DIRECTORY;
+	io.in.share_access	 = 0;
+	io.in.create_disposition = NTCREATEX_DISP_OPEN;
+	io.in.fname		 = DNAME;
+
+	status = smb2_create(tree, tctx, &(io));
+	CHECK_STATUS(status, NT_STATUS_OK);
+
+	return ret;
+}
+
+/*
+ * Test that a directory's delete on close flag is ignored if the directory
+ * is not empty at the time of open.
+ *
+ * PART 4: Add a file to the directory, open file, open file again with
+ *         delete on close, close second file handle (file now "delete
+ *         pending"), open directory with delete on close, close first
+ *         file handle (file is now deleted), close directory handle.
+ *         Directory should not be deleted.
+ */
+static bool test_doc_directory4(struct torture_context *tctx, struct smb2_tree *tree)
+{
+	bool ret = true;
+	uint32_t perms = 0;
+	NTSTATUS status;
+	struct smb2_create io;
+	struct smb2_handle dh;
+	struct smb2_handle fh;
+
+	/* File should not exist for this first test, so make sure */
+	set_dir_delete_perms(tctx, tree);
+
+	smb2_deltree(tree, DNAME);
+
+	torture_comment(tctx, "Create directory.\n");
+
+	create_dir(tctx, tree);
+
+	set_dir_delete_perms(tctx, tree);
+
+	torture_comment(tctx, "Add a file.\n");
+
+	perms = SEC_STD_SYNCHRONIZE | SEC_STD_READ_CONTROL | SEC_STD_DELETE | 
+		SEC_DIR_WRITE_ATTRIBUTE | SEC_DIR_READ_ATTRIBUTE | 
+		SEC_DIR_WRITE_EA | SEC_FILE_APPEND_DATA |
+		SEC_FILE_WRITE_DATA;
+
+	ZERO_STRUCT(io);
+	io.in.desired_access	 = perms;
+	io.in.file_attributes	 = 0;
+	io.in.create_disposition = NTCREATEX_DISP_OPEN_IF;
+	io.in.share_access	 = 0;
+	io.in.create_options     = NTCREATEX_OPTIONS_NON_DIRECTORY_FILE;
+	io.in.fname              = FNAME;
+
+	status = smb2_create(tree, tctx, &io);
+	CHECK_STATUS(status, NT_STATUS_OK);
+	status = smb2_util_close(tree, io.out.file.handle);
+
+	torture_comment(tctx, "Open file share delete, but do not close\n");
+
+	perms = SEC_STD_SYNCHRONIZE | SEC_STD_WRITE_DAC | SEC_STD_DELETE |
+		SEC_STD_READ_CONTROL | SEC_FILE_WRITE_ATTRIBUTE |
+		SEC_FILE_READ_ATTRIBUTE | SEC_FILE_EXECUTE | SEC_FILE_WRITE_EA |
+		SEC_FILE_READ_EA | SEC_FILE_APPEND_DATA | SEC_FILE_READ_DATA |
+		SEC_FILE_WRITE_DATA;
+
+	ZERO_STRUCT(io);
+	io.in.desired_access	 = perms;
+	io.in.file_attributes	 = 0;
+	io.in.create_disposition = NTCREATEX_DISP_OPEN;
+	io.in.share_access	 = NTCREATEX_SHARE_ACCESS_DELETE |
+				   NTCREATEX_SHARE_ACCESS_READ |
+				   NTCREATEX_SHARE_ACCESS_WRITE;
+	io.in.create_options     = NTCREATEX_OPTIONS_NON_DIRECTORY_FILE;
+	io.in.fname              = FNAME;
+
+	status = smb2_create(tree, tctx, &io);
+	CHECK_STATUS(status, NT_STATUS_OK);
+	fh = io.out.file.handle;
+
+	torture_comment(tctx, "Open file delete on close, and close\n");
+
+	ZERO_STRUCT(io);
+	io.in.desired_access	 = perms;
+	io.in.file_attributes	 = 0;
+	io.in.create_disposition = NTCREATEX_DISP_OPEN;
+	io.in.share_access	 = NTCREATEX_SHARE_ACCESS_DELETE |
+				   NTCREATEX_SHARE_ACCESS_READ |
+				   NTCREATEX_SHARE_ACCESS_WRITE;
+	io.in.create_options     = NTCREATEX_OPTIONS_DELETE_ON_CLOSE | 
+				   NTCREATEX_OPTIONS_NON_DIRECTORY_FILE;
+	io.in.fname              = FNAME;
+
+	status = smb2_create(tree, tctx, &io);
+	CHECK_STATUS(status, NT_STATUS_OK);
+	status = smb2_util_close(tree, io.out.file.handle);
+
+	torture_comment(tctx, "Open directory with DELETE_ON_CLOSE\n");
+
+	perms = SEC_STD_SYNCHRONIZE | SEC_STD_WRITE_DAC |
+		SEC_STD_READ_CONTROL | SEC_FILE_WRITE_ATTRIBUTE |
+		SEC_FILE_READ_ATTRIBUTE | SEC_FILE_EXECUTE | SEC_FILE_WRITE_EA |
+		SEC_FILE_READ_EA | SEC_FILE_APPEND_DATA | SEC_FILE_READ_DATA |
+		SEC_FILE_WRITE_DATA;
+
+	ZERO_STRUCT(io);
+	io.in.desired_access	 = perms;
+	io.in.create_options	 = NTCREATEX_OPTIONS_DIRECTORY;
+	io.in.file_attributes	 = FILE_ATTRIBUTE_DIRECTORY;
+	io.in.share_access	 = 0;
+	io.in.create_disposition = NTCREATEX_DISP_OPEN;
+	io.in.fname		 = DNAME;
+
+	status = smb2_create(tree, tctx, &(io));
+	CHECK_STATUS(status, NT_STATUS_OK);
+	dh = io.out.file.handle;
+
+	torture_comment(tctx, "Close first file handle.\n");
+	status = smb2_util_close(tree, fh);
+
+	/* Check it was deleted */
+	ZERO_STRUCT(io);
+	io.in.desired_access	 = perms;
+	io.in.file_attributes	 = 0;
+	io.in.create_disposition = NTCREATEX_DISP_OPEN;
+	io.in.share_access	 = NTCREATEX_SHARE_ACCESS_DELETE |
+				   NTCREATEX_SHARE_ACCESS_READ |
+				   NTCREATEX_SHARE_ACCESS_WRITE;
+	io.in.create_options     = 0;
+	io.in.fname              = FNAME;
+
+	torture_comment(tctx, "Testing if the file was deleted when closed\n");
+	torture_comment(tctx, "We expect NT_STATUS_OBJECT_NAME_NOT_FOUND\n");
+
+	status = smb2_create(tree, tctx, &io);
+	CHECK_STATUS(status, NT_STATUS_OBJECT_NAME_NOT_FOUND);
+
+	torture_comment(tctx, "Close directory handle.\n");
+	status = smb2_util_close(tree, dh);
+
+	torture_comment(tctx, "Re-open directory. We expect NT_STATUS_OK\n");
+
+	perms = SEC_STD_SYNCHRONIZE | SEC_STD_WRITE_DAC |
+		SEC_STD_READ_CONTROL | SEC_FILE_WRITE_ATTRIBUTE |
+		SEC_FILE_READ_ATTRIBUTE | SEC_FILE_EXECUTE | SEC_FILE_WRITE_EA |
+		SEC_FILE_READ_EA | SEC_FILE_APPEND_DATA | SEC_FILE_READ_DATA |
+		SEC_FILE_WRITE_DATA;
+
+	ZERO_STRUCT(io);
+	io.in.desired_access	 = perms;
+	io.in.create_options	 = NTCREATEX_OPTIONS_DIRECTORY;
+	io.in.file_attributes	 = FILE_ATTRIBUTE_DIRECTORY;
+	io.in.share_access	 = 0;
+	io.in.create_disposition = NTCREATEX_DISP_OPEN;
+	io.in.fname		 = DNAME;
+
+	status = smb2_create(tree, tctx, &(io));
+	CHECK_STATUS(status, NT_STATUS_OK);
+
+	return ret;
+}
+/*
  *  Extreme testing of Delete On Close and permissions
  */
 struct torture_suite *torture_smb2_doc_init(void)
@@ -529,6 +1236,12 @@ struct torture_suite *torture_smb2_doc_init(void)
 	torture_suite_add_1smb2_test(suite, "CREATE Existing", test_doc_create_exist);
 	torture_suite_add_1smb2_test(suite, "CREATE_IF", test_doc_create_if);
 	torture_suite_add_1smb2_test(suite, "CREATE_IF Existing", test_doc_create_if_exist);
+	torture_suite_add_1smb2_test(suite, "parent_open_share_write", test_doc_parent_share_write);
+	torture_suite_add_1smb2_test(suite, "parent_open_no_share_write", test_doc_parent_no_share_write);
+	torture_suite_add_1smb2_test(suite, "directory", test_doc_directory);
+	torture_suite_add_1smb2_test(suite, "directory2", test_doc_directory2);
+	torture_suite_add_1smb2_test(suite, "directory3", test_doc_directory3);
+	torture_suite_add_1smb2_test(suite, "directory4", test_doc_directory4);
 
 	suite->description = talloc_strdup(suite, "SMB2-Delete-on-Close-Perms tests");
 
