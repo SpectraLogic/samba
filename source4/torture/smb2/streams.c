@@ -24,7 +24,6 @@
 #include "libcli/smb2/smb2_calls.h"
 
 #include "torture/torture.h"
-#include "torture/util.h"
 #include "torture/smb2/proto.h"
 
 #include "system/filesys.h"
@@ -169,15 +168,6 @@ static bool check_stream_list(struct smb2_tree *tree,
 
 	finfo.generic.level = RAW_FILEINFO_STREAM_INFORMATION;
 	finfo.generic.in.file.handle = h;
-	if (TARGET_IS_LIKEWISE(tctx)) {			
-	    torture_warning(tctx, "LIKEWISE: have to return early if num_exp == 0"
-				  " otherwise test fails on a incorrect condition"
-				  " in smb2.streams.dir.dir");
-	    if (num_exp == 0) {
-		    ret = true;
-		    goto fail;
-	    }
-	}
 
 	status = smb2_getinfo_file(tree, tctx, &finfo);
 	if (!NT_STATUS_IS_OK(status)) {
@@ -303,14 +293,7 @@ static bool test_stream_dir(struct torture_context *tctx,
 
 	torture_comment(tctx, "(%s) list the streams on the basedir\n",
 	    __location__);
-	if(!TARGET_IS_LIKEWISE(tctx)) {
-	    ret &= check_stream_list(tree, mem_ctx, DNAME, 0, NULL, h);
-	} else {
-	    torture_warning(tctx, "LIKEWISE: using original torture context"
-				  " otherwise have a memory core dump from accessing"
-				  " the wrong context");
-	    ret &= check_stream_list(tree, tctx, DNAME, 0, NULL, h);
-	}
+	ret &= check_stream_list(tree, mem_ctx, DNAME, 0, NULL, h);
 done:
 	smb2_util_unlink(tree, fname);
 	smb2_deltree(tree, DNAME);
