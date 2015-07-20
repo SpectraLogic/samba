@@ -536,15 +536,6 @@ done:
 	return h1;
 }
 
-/*
-   testing of recursive change notify
-*/
-static  bool torture_smb2_notify_recursive_likewise_validate(
-				struct torture_context *torture,
-				struct smb2_tree *tree1,
-				union smb_notify *notify,
-				struct smb2_request *req1);
-
 static bool torture_smb2_notify_recursive(struct torture_context *torture,
 				struct smb2_tree *tree1,
 				struct smb2_tree *tree2)
@@ -631,7 +622,12 @@ static bool torture_smb2_notify_recursive(struct torture_context *torture,
 	io1.smb2.in.fname = BASEDIR "\\subdir-name";
 	status = smb2_create(tree2, torture, &(io1.smb2));
 	CHECK_STATUS(status, NT_STATUS_OK);
-	smb2_util_close(tree2, io1.smb2.out.file.handle);
+	if (TARGET_IS_LIKEWISE(torture)) {
+		torture_warning(torture, "LIKEWISE: closing handle to "
+		"avoid sharing violation when cleaning up");
+
+		smb2_util_close(tree2, io1.smb2.out.file.handle);
+	}
 
 	io1.smb2.in.fname = BASEDIR "\\subdir-name\\subname1";
 	status = smb2_create(tree2, torture, &(io1.smb2));
@@ -659,7 +655,6 @@ static bool torture_smb2_notify_recursive(struct torture_context *torture,
 	sinfo.rename_information.in.new_name = BASEDIR "\\subname2-r";
 	status = smb2_setinfo_file(tree2, &sinfo);
 	CHECK_STATUS(status, NT_STATUS_OK);
-	smb2_util_close(tree2, io1.smb2.out.file.handle);
 
 	io1.smb2.in.fname = BASEDIR "\\subname2-r";
 	io1.smb2.in.create_disposition = NTCREATEX_DISP_OPEN;
@@ -694,42 +689,30 @@ static bool torture_smb2_notify_recursive(struct torture_context *torture,
 	status = smb2_util_unlink(tree2, BASEDIR "\\subname3-r");
 	CHECK_STATUS(status, NT_STATUS_OK);
 
-	if (!TARGET_IS_LIKEWISE(torture)) {
-		notify.smb2.in.recursive = false;
-		req2 = smb2_notify_send(tree1, &(notify.smb2));
-	} else {
-		torture_warning(torture, "LIKEWISE: filter handling differs");
-	}
+	notify.smb2.in.recursive = false;
+	req2 = smb2_notify_send(tree1, &(notify.smb2));
+	status = smb2_notify_recv(req1, torture, &(notify.smb2));
+	CHECK_STATUS(status, NT_STATUS_OK);
 
-	if (!TARGET_IS_LIKEWISE(torture)) {
-		status = smb2_notify_recv(req1, torture, &(notify.smb2));
-		CHECK_STATUS(status, NT_STATUS_OK);
-	
-		CHECK_VAL(notify.smb2.out.num_changes, 9);
-		CHECK_VAL(notify.smb2.out.changes[0].action, NOTIFY_ACTION_ADDED);
-		CHECK_WIRE_STR(notify.smb2.out.changes[0].name, "subdir-name");
-		CHECK_VAL(notify.smb2.out.changes[1].action, NOTIFY_ACTION_ADDED);
-		CHECK_WIRE_STR(notify.smb2.out.changes[1].name, "subdir-name\\subname1");
-		CHECK_VAL(notify.smb2.out.changes[2].action, NOTIFY_ACTION_OLD_NAME);
-		CHECK_WIRE_STR(notify.smb2.out.changes[2].name, "subdir-name\\subname1");
-		CHECK_VAL(notify.smb2.out.changes[3].action, NOTIFY_ACTION_NEW_NAME);
-		CHECK_WIRE_STR(notify.smb2.out.changes[3].name, "subdir-name\\subname1-r");
-		CHECK_VAL(notify.smb2.out.changes[4].action, NOTIFY_ACTION_ADDED);
-		CHECK_WIRE_STR(notify.smb2.out.changes[4].name, "subdir-name\\subname2");
-		CHECK_VAL(notify.smb2.out.changes[5].action, NOTIFY_ACTION_REMOVED);
-		CHECK_WIRE_STR(notify.smb2.out.changes[5].name, "subdir-name\\subname2");
-		CHECK_VAL(notify.smb2.out.changes[6].action, NOTIFY_ACTION_ADDED);
-		CHECK_WIRE_STR(notify.smb2.out.changes[6].name, "subname2-r");
-		CHECK_VAL(notify.smb2.out.changes[7].action, NOTIFY_ACTION_OLD_NAME);
-		CHECK_WIRE_STR(notify.smb2.out.changes[7].name, "subname2-r");
-		CHECK_VAL(notify.smb2.out.changes[8].action, NOTIFY_ACTION_NEW_NAME);
-		CHECK_WIRE_STR(notify.smb2.out.changes[8].name, "subname3-r");
-	} else {
-		torture_warning(torture, "LIKEWISE: likewise specific notify handling");
-		ret = torture_smb2_notify_recursive_likewise_validate(
-				torture, tree1, &notify, req1);
-	}
-
+	CHECK_VAL(notify.smb2.out.num_changes, 9);
+	CHECK_VAL(notify.smb2.out.changes[0].action, NOTIFY_ACTION_ADDED);
+	CHECK_WIRE_STR(notify.smb2.out.changes[0].name, "subdir-name");
+	CHECK_VAL(notify.smb2.out.changes[1].action, NOTIFY_ACTION_ADDED);
+	CHECK_WIRE_STR(notify.smb2.out.changes[1].name, "subdir-name\\subname1");
+	CHECK_VAL(notify.smb2.out.changes[2].action, NOTIFY_ACTION_OLD_NAME);
+	CHECK_WIRE_STR(notify.smb2.out.changes[2].name, "subdir-name\\subname1");
+	CHECK_VAL(notify.smb2.out.changes[3].action, NOTIFY_ACTION_NEW_NAME);
+	CHECK_WIRE_STR(notify.smb2.out.changes[3].name, "subdir-name\\subname1-r");
+	CHECK_VAL(notify.smb2.out.changes[4].action, NOTIFY_ACTION_ADDED);
+	CHECK_WIRE_STR(notify.smb2.out.changes[4].name, "subdir-name\\subname2");
+	CHECK_VAL(notify.smb2.out.changes[5].action, NOTIFY_ACTION_REMOVED);
+	CHECK_WIRE_STR(notify.smb2.out.changes[5].name, "subdir-name\\subname2");
+	CHECK_VAL(notify.smb2.out.changes[6].action, NOTIFY_ACTION_ADDED);
+	CHECK_WIRE_STR(notify.smb2.out.changes[6].name, "subname2-r");
+	CHECK_VAL(notify.smb2.out.changes[7].action, NOTIFY_ACTION_OLD_NAME);
+	CHECK_WIRE_STR(notify.smb2.out.changes[7].name, "subname2-r");
+	CHECK_VAL(notify.smb2.out.changes[8].action, NOTIFY_ACTION_NEW_NAME);
+	CHECK_WIRE_STR(notify.smb2.out.changes[8].name, "subname3-r");
 
 done:
 	smb2_util_close(tree1, h1);
@@ -975,69 +958,6 @@ check_notify(struct torture_context *torture,
 	}
 	return false;
 }
-
-static  bool torture_smb2_notify_recursive_likewise_validate(
-				struct torture_context *torture,
-				struct smb2_tree *tree1,
-				union smb_notify *notify,
-				struct smb2_request *req1)
-{
-	NTSTATUS status;
-	bool ret = true;
-	int i, num_changes = 0;
-	int max_changes;
-
-	notify->smb2.in.recursive = true;
-	notify->smb2.in.completion_filter = (FILE_NOTIFY_CHANGE_NAME |
-				FILE_NOTIFY_CHANGE_ATTRIBUTES |
-				FILE_NOTIFY_CHANGE_CREATION);
-
-	max_changes = 9;
-	while (num_changes < max_changes && ret == true) {
-		status = smb2_notify_recv(req1, torture, &(notify->smb2));
-		CHECK_STATUS(status, NT_STATUS_OK);
-
-		num_changes += notify->smb2.out.num_changes;
-
-		for (i = 0;
-		     i < notify->smb2.out.num_changes && ret == true; i++) {
-
-			switch(notify->smb2.out.changes[i].action) {
-
-			case NOTIFY_ACTION_ADDED:
-				ret = check_notify(torture, notify, i,
-					add_notify);
-				break;
-
-			case NOTIFY_ACTION_OLD_NAME:
-				ret = check_notify(torture, notify, i,
-					old_notify);
-				break;
-
-			case NOTIFY_ACTION_NEW_NAME:
-				ret = check_notify(torture, notify, i,
-					new_notify);
-				break;
-
-			case NOTIFY_ACTION_REMOVED:
-				ret = check_notify(torture, notify, i,
-					removed_notify);
-				break;
-
-			default:
-				torture_warning(torture, "Ivnalid action 0x%x",
-					notify->smb2.out.changes[i].action);
-				ret = false;
-				break;
-			}
-		}
-		req1 = smb2_notify_send(tree1, &(notify->smb2));
-	}
-
-done:
-	return ret;
-}
-
 
 /*
    testing of change notify mask change
