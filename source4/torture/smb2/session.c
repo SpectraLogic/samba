@@ -810,8 +810,8 @@ bool test_session_reauth5(struct torture_context *tctx, struct smb2_tree *tree)
 
 	status = smb2_setinfo_file(tree, &sfinfo);
 	if (torture_setting_bool(tctx, "likewise", false)) {
-		torture_warning(tctx, "LIKEWISE: access expected");
-		CHECK_STATUS(status, NT_STATUS_OK);
+		torture_warning(tctx, "LIKEWISE: sharing violation expected");
+		CHECK_STATUS(status, NT_STATUS_SHARING_VIOLATION);
 	}
 	else
 		CHECK_STATUS(status, NT_STATUS_ACCESS_DENIED);
@@ -882,8 +882,8 @@ bool test_session_reauth5(struct torture_context *tctx, struct smb2_tree *tree)
 
 	status = smb2_setinfo_file(tree, &sfinfo);
 	if (torture_setting_bool(tctx, "likewise", false)) {
-		torture_warning(tctx, "LIKEWISE: access allowed");
-		CHECK_STATUS(status, NT_STATUS_OK);
+		torture_warning(tctx, "LIKEWISE: sharing violation expected");
+		CHECK_STATUS(status, NT_STATUS_SHARING_VIOLATION);
 	}
 	else
 		CHECK_STATUS(status, NT_STATUS_ACCESS_DENIED);
@@ -942,7 +942,10 @@ bool test_session_reauth5(struct torture_context *tctx, struct smb2_tree *tree)
 
 	status = smb2_setinfo_file(tree, &sfinfo);
 	if (torture_setting_bool(tctx, "likewise", false)) {
-		torture_warning(tctx, "LIKEWISE: access allowed");
+		/* LIKEWISE: because of dh1 close above in smb2_util_close
+		 * this passes likewise. Closing the directory enables
+		 * likewise to access the file as the secondary user */
+		torture_warning(tctx, "LIKEWISE: ok expected");
 		CHECK_STATUS(status, NT_STATUS_OK);
 	}
 	else
