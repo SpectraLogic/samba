@@ -1323,6 +1323,15 @@ static bool test_create_null_dacl(struct torture_context *tctx,
 	struct security_acl dacl;
 
 	torture_comment(tctx, "TESTING SEC_DESC WITH A NULL DACL\n");
+	if (torture_setting_bool(tctx, "likewise", false)) {
+		/* Likewise prevents this type of action explicitly.
+		 * If a nulldacl is set, then anything can be done to 
+		 * the file.  Likewise prevents this due to security
+		 * concerns.
+		 */
+		torture_warning(tctx, "LIKEWISE: security_concern");
+		goto done;
+	}
 
 	smb2_util_unlink(tree, fname);
 

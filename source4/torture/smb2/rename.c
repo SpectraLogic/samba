@@ -988,7 +988,21 @@ static bool torture_smb2_rename_dir_openfile(struct torture_context *torture,
 	sinfo.rename_information.in.new_name =
 		BASEDIR "-new";
 	status = smb2_setinfo_file(tree1, &sinfo);
-	CHECK_STATUS(status, NT_STATUS_ACCESS_DENIED);
+	if (torture_setting_bool(torture, "likewise", false)) {
+		/* Likewise runs on top of a ZFS file system and
+		 * in many *nix filesystems, renaming a folder with
+		 * an open file underneath it is perfectly valid.
+		 * This could be changed at a later date, but 
+		 * it does have performance implications, as we have
+		 * to then check all of our subfolders/directories
+		 * for open files on a set_info call
+		*/
+		torture_warning(torture, "LIKEWISE: rename_directory_openfile"
+				         " is valid");
+		CHECK_STATUS(status, NT_STATUS_OK);
+	} else {
+		CHECK_STATUS(status, NT_STATUS_ACCESS_DENIED);
+	}
 
 	torture_comment(torture, "Closing directory\n");
 

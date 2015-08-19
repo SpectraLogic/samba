@@ -1349,7 +1349,14 @@ static bool test_stream_rename2(struct torture_context *tctx,
 	sinfo.rename_information.in.file.handle = h1;
 	sinfo.rename_information.in.new_name = sname1;
 	status = smb2_setinfo_file(tree, &sinfo);
-	CHECK_STATUS(status, NT_STATUS_SHARING_VIOLATION);
+	if (torture_setting_bool(tctx, "likewise", false)) {
+		/* likewise supports opaque breaking of oplock with
+		 * a sharing violation.  See [MS-FSCC] 2.4.34.2 */
+		torture_warning(tctx, "LIKEWISE: opaque SHARING_VIOLATION");
+		CHECK_STATUS(status, NT_STATUS_OK);
+	} else {
+		CHECK_STATUS(status, NT_STATUS_SHARING_VIOLATION);
+	}
 
 	if (!torture_setting_bool(tctx, "samba4", false)) {
 		/*
