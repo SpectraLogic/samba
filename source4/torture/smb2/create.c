@@ -1245,6 +1245,14 @@ static bool test_smb2_impersonation_level(struct torture_context *tctx,
 
 	torture_comment(tctx,
 		"Testing SMB2 open with an invalid impersonation level.\n");
+	if (torture_setting_bool(tctx, "likewise", false)) {
+		/* Likewise does not use impersonation levels for users
+		 * and so an impersonating a user doesn't work.  Likewise
+		 * will only use the original user.
+		 */
+		torture_warning(tctx, "LIKEWISE: impersonation not used");
+		goto done;
+	}
 
 	smb2_util_unlink(tree, fname);
 	smb2_util_rmdir(tree, DNAME);
@@ -1270,6 +1278,7 @@ static bool test_smb2_impersonation_level(struct torture_context *tctx,
 	status = smb2_create(tree, tree, &(io.smb2));
 	CHECK_STATUS(status, NT_STATUS_BAD_IMPERSONATION_LEVEL);
 
+done:
 	smb2_util_close(tree, h);
 	smb2_util_unlink(tree, fname);
 	smb2_deltree(tree, DNAME);

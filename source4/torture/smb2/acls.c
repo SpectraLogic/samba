@@ -441,6 +441,11 @@ static bool test_generic_bits(struct torture_context *tctx, struct smb2_tree *tr
 			continue;
 		}
 
+		if (torture_setting_bool(tctx, "likewise", false)) {
+			torture_warning(tctx, "LIKEWISE: anonymous not supported");
+			continue;
+		}
+
 		torture_comment(tctx, "Testing generic bits 0x%08x (anonymous)\n",
 		       file_mappings[i].gen_bits);
 		sd = security_descriptor_dacl_create(tctx,
@@ -1343,6 +1348,15 @@ static bool test_inheritance_flags(struct torture_context *tctx,
 		return false;
 
 	torture_comment(tctx, "TESTING ACL INHERITANCE FLAGS\n");
+	if (torture_setting_bool(tctx,"likewise",false)) {
+		torture_warning(tctx, "LIKEWISE: security_concern");
+		/*
+		 * Likewise does not allow all inherited ACLs, since
+		 * it raises a security concern similar to nulldacl
+		 * creation in create.nulldacl.nulldacl
+		 */
+		goto done;
+	}
 
 	ZERO_STRUCT(io);
 	io.level = RAW_OPEN_SMB2;
