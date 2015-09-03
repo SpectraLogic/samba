@@ -1017,22 +1017,39 @@ static bool test_modify_search(struct torture_context *tctx,
 		f.in.max_response_size  = 4096;
 	} while (count != 0);
 
-
-	ret &= check_result(tctx, &result, "t039-39.txt", true, FILE_ATTRIBUTE_HIDDEN);
-	ret &= check_result(tctx, &result, "t000-0.txt", true, FILE_ATTRIBUTE_HIDDEN);
-	ret &= check_result(tctx, &result, "t014-14.txt", false, 0);
-	ret &= check_result(tctx, &result, "t015-15.txt", true, FILE_ATTRIBUTE_HIDDEN);
-	ret &= check_result(tctx, &result, "t016-16.txt", true, FILE_ATTRIBUTE_NORMAL);
-	ret &= check_result(tctx, &result, "t017-17.txt", true, FILE_ATTRIBUTE_SYSTEM);
-	ret &= check_result(tctx, &result, "t018-18.txt", true, FILE_ATTRIBUTE_ARCHIVE);
-	ret &= check_result(tctx, &result, "t019-19.txt", true, FILE_ATTRIBUTE_ARCHIVE);
-	ret &= check_result(tctx, &result, "T013-13.txt.2", true, FILE_ATTRIBUTE_ARCHIVE);
-	ret &= check_result(tctx, &result, "T003-3.txt.2", false, 0);
-	ret &= check_result(tctx, &result, "T013-13.txt.3", true, FILE_ATTRIBUTE_NORMAL);
+	if (torture_setting_bool(tctx, "likewise", false)) {
+		/*
+		 * Likewise treats all files as archive files
+		 */
+		torture_warning(tctx, "LIKEWISE: file attributes includes archive");
+		ret &= check_result(tctx, &result, "t039-39.txt", true, FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_ARCHIVE);
+		ret &= check_result(tctx, &result, "t000-0.txt", true, FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_ARCHIVE);
+		ret &= check_result(tctx, &result, "t014-14.txt", false, 0);
+		ret &= check_result(tctx, &result, "t015-15.txt", true, FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_ARCHIVE);
+		ret &= check_result(tctx, &result, "t016-16.txt", true, FILE_ATTRIBUTE_NORMAL);
+		ret &= check_result(tctx, &result, "t017-17.txt", true, FILE_ATTRIBUTE_SYSTEM | FILE_ATTRIBUTE_ARCHIVE);
+		ret &= check_result(tctx, &result, "t018-18.txt", true, FILE_ATTRIBUTE_ARCHIVE);
+		ret &= check_result(tctx, &result, "t019-19.txt", true, FILE_ATTRIBUTE_ARCHIVE);
+		ret &= check_result(tctx, &result, "T013-13.txt.2", true, FILE_ATTRIBUTE_ARCHIVE);
+		ret &= check_result(tctx, &result, "T003-3.txt.2", false, 0);
+		ret &= check_result(tctx, &result, "T013-13.txt.3", true, FILE_ATTRIBUTE_NORMAL);
+	} else {
+		ret &= check_result(tctx, &result, "t039-39.txt", true, FILE_ATTRIBUTE_HIDDEN);
+		ret &= check_result(tctx, &result, "t000-0.txt", true, FILE_ATTRIBUTE_HIDDEN);
+		ret &= check_result(tctx, &result, "t014-14.txt", false, 0);
+		ret &= check_result(tctx, &result, "t015-15.txt", true, FILE_ATTRIBUTE_HIDDEN);
+		ret &= check_result(tctx, &result, "t016-16.txt", true, FILE_ATTRIBUTE_NORMAL);
+		ret &= check_result(tctx, &result, "t017-17.txt", true, FILE_ATTRIBUTE_SYSTEM);
+		ret &= check_result(tctx, &result, "t018-18.txt", true, FILE_ATTRIBUTE_ARCHIVE);
+		ret &= check_result(tctx, &result, "t019-19.txt", true, FILE_ATTRIBUTE_ARCHIVE);
+		ret &= check_result(tctx, &result, "T013-13.txt.2", true, FILE_ATTRIBUTE_ARCHIVE);
+		ret &= check_result(tctx, &result, "T003-3.txt.2", false, 0);
+		ret &= check_result(tctx, &result, "T013-13.txt.3", true, FILE_ATTRIBUTE_NORMAL);	
+	}
 
 	if (!ret) {
 		for (i=0;i<result.count;i++) {
-			torture_warning(tctx, "%s %s (0x%x)\n",
+			torture_warning(tctx, "%s %s (0x%x)",
 			       result.list[i].both_directory_info.name.s,
 			       attrib_string(tctx,
 			       result.list[i].both_directory_info.attrib),
