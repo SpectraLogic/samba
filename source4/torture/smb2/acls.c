@@ -400,8 +400,8 @@ static bool test_generic_bits(struct torture_context *tctx, struct smb2_tree *tr
 			expected_mask_anon |= SEC_STD_DELETE;
 		}
 
-		torture_comment(tctx, "Testing generic bits 0x%08x\n",
-		       file_mappings[i].gen_bits);
+		torture_comment(tctx, "Testing generic bits[%d] 0x%08x\n",
+		       i, file_mappings[i].gen_bits);
 		sd = security_descriptor_dacl_create(tctx,
 						0, owner_sid, NULL,
 						owner_sid,
@@ -409,6 +409,27 @@ static bool test_generic_bits(struct torture_context *tctx, struct smb2_tree *tr
 						file_mappings[i].gen_bits,
 						0,
 						NULL);
+
+		if (torture_setting_bool(tctx, "likewise", false)) {
+		    if (file_mappings[i].gen_bits == SEC_GENERIC_WRITE) {
+			/*
+			 * Likewise does not handle empty or null DACLs so it
+			 * isn't able to generate a response without a DACL
+			 * present.  There are always entries in the ACL
+			 */
+			torture_warning(tctx, "LIKEWISE: DACL must be present");
+			continue;
+		    } else if (file_mappings[i].gen_bits == SEC_FILE_READ_ATTRIBUTE) {
+			/*
+			 * Likewise must set READ_CONTROL when
+			 * FILE_READ_ATTRIBUTES is set.  This is because the
+			 * BSD ACL implies both.
+			 */
+			torture_warning(tctx, "LIKEWISE: SEC_FILE_READ_ATTRIBUTE implies"
+					      " read control");
+			continue;
+		    }
+		}
 
 		set.set_secdesc.level = RAW_SFILEINFO_SEC_DESC;
 		set.set_secdesc.in.file.handle = handle;
@@ -443,6 +464,7 @@ static bool test_generic_bits(struct torture_context *tctx, struct smb2_tree *tr
 
 		if (torture_setting_bool(tctx, "likewise", false)) {
 			torture_warning(tctx, "LIKEWISE: anonymous not supported");
+			smb2_util_close(tree, io.out.file.handle);
 			continue;
 		}
 
@@ -493,7 +515,7 @@ static bool test_generic_bits(struct torture_context *tctx, struct smb2_tree *tr
 	smb2_util_unlink(tree, fname);
 
 
-	torture_comment(tctx, "TESTING DIR GENERIC BITS\n");
+	torture_comment(tctx, "\n\nTESTING DIR GENERIC BITS\n");
 
 	ZERO_STRUCT(io);
 	io.level = RAW_OPEN_SMB2;
@@ -562,8 +584,8 @@ static bool test_generic_bits(struct torture_context *tctx, struct smb2_tree *tr
 			expected_mask_anon |= SEC_STD_DELETE;
 		}
 
-		torture_comment(tctx, "Testing generic bits 0x%08x\n",
-		       file_mappings[i].gen_bits);
+		torture_comment(tctx, "Testing generic bits[%d] 0x%08x\n",
+		       i, dir_mappings[i].gen_bits);
 		sd = security_descriptor_dacl_create(tctx,
 						0, owner_sid, NULL,
 						owner_sid,
@@ -571,6 +593,17 @@ static bool test_generic_bits(struct torture_context *tctx, struct smb2_tree *tr
 						dir_mappings[i].gen_bits,
 						0,
 						NULL);
+
+		if (torture_setting_bool(tctx, "likewise", false) &&
+		    dir_mappings[i].gen_bits == SEC_GENERIC_WRITE) {
+			/*
+			 * Likewise does not handle empty or null DACLs so it
+			 * isn't able to generate a response without a DACL
+			 * present.  There are always entries in the ACL
+			 */
+			torture_warning(tctx, "LIKEWISE: DACL must be present");
+			continue;
+		}
 
 		set.set_secdesc.level = RAW_SFILEINFO_SEC_DESC;
 		set.set_secdesc.in.file.handle = handle;
@@ -600,6 +633,11 @@ static bool test_generic_bits(struct torture_context *tctx, struct smb2_tree *tr
 		smb2_util_close(tree, io.out.file.handle);
 
 		if (!has_take_ownership_privilege) {
+			continue;
+		}
+
+		if (torture_setting_bool(tctx, "likewise", false)) {
+			torture_warning(tctx, "LIKEWISE: anonymous not supported");
 			continue;
 		}
 
