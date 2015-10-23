@@ -231,6 +231,8 @@ bool run_credit_exhaust(struct torture_context *tctx,
 
 bool run_write_parallel(struct torture_context *tctx, 
         struct smb2_tree *tree,
+	char *fname,
+	char *dname,
         int max_jobs,
         long writesize,
         long filesize,
@@ -238,7 +240,6 @@ bool run_write_parallel(struct torture_context *tctx,
 {
     bool        result = true;
     bool        ret = true;
-    char        dir[] = "sim_write_parallel";
     int         i = 0;
     int         num_child = 0;
     int         child_status = 0;
@@ -253,8 +254,9 @@ bool run_write_parallel(struct torture_context *tctx,
     struct smb2_handle hdir;
     struct smb2_create io;
     struct smb2_close cio;
+    struct smb2_write w;
 
-    status = torture_smb2_testdir(tree, dir, &hdir);
+    status = torture_smb2_testdir(tree, dname, &hdir);
     torture_assert_ntstatus_ok(tctx, status, "Error creating directory");
 
     torture_comment(tctx, "Simulated Parallel Writes.\n"
@@ -271,7 +273,8 @@ bool run_write_parallel(struct torture_context *tctx,
         {
             int exit_code = 0;
 
-            char buf[MAX_WRITE];
+	    char *buf;
+	    buf = malloc(sizeof(char) * writesize);
 	    char time_filename[MAX_WRITE];
 
             thrd_data.tt_id = i;
@@ -290,7 +293,7 @@ bool run_write_parallel(struct torture_context *tctx,
                 exit(EINVAL);
             }
 
-            sprintf(thrd_data.tt_fname, "%s\\parallel_write_%d", dir, i);
+            sprintf(thrd_data.tt_fname, "%s\\%s%d", dname, fname, i);
 	    sprintf(time_filename, "/tmp/p_w_time_%d", i);
             sprintf(buf, "parallel_write_payload_%d\n", i);
 
@@ -326,9 +329,17 @@ bool run_write_parallel(struct torture_context *tctx,
              */
             for (int j = 0, off = 0; j < nwrites; j++, off += writesize)
             {
-		torture_comment(tctx, "writing %d, offset %d\n", j, off);
-                smb2_util_write(thrd_data.tt_tree, thrd_data.tt_handle, buf, off,
-                        writesize);
+		ZERO_STRUCT(w);
+		w.in.file.handle = thrd_data.tt_handle;
+		w.in.offset = off;
+		w.in.data = data_blob_talloc(thrd_data.tt_memctx, NULL, sizeof(buf));
+		for(int k = 0; k < sizeof(buf); k++) {
+		    w.in.data.data[k] = buf[k];
+		}
+
+		//torture_comment(tctx, "writing %d, offset %d\n", j, off);
+
+		status = smb2_write(thrd_data.tt_tree, &w);
             }
 
             clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -342,7 +353,7 @@ bool run_write_parallel(struct torture_context *tctx,
 	    ZERO_STRUCT(cio);
 	    cio.in.file.handle 	= thrd_data.tt_handle;
 	    cio.in.flags	= SMB2_CLOSE_FLAGS_FULL_INFORMATION;
-	    status = smb2_close(thrd_data.tt_tree, &cio);
+	    status		= smb2_close(thrd_data.tt_tree, &cio);
 
             smb2_logoff(thrd_data.tt_tree->session);
             talloc_free(thrd_data.tt_memctx);
@@ -353,6 +364,7 @@ bool run_write_parallel(struct torture_context *tctx,
 		fprintf(fp, "%lf", thrd_data.tt_msec);
 	    }
 	    fclose(fp);
+	    free(buf);
 
             exit(exit_code);
         }
@@ -437,7 +449,7 @@ bool sim_write_parallel(struct torture_context *tctx,
 	long wsize;
 	long fsize;
     } wperf_permutations[] = {
-	/*{1,  (1 << 10),  8 * (1 << 20)},
+	{1,  (1 << 10),  8 * (1 << 20)},
 	{1,  (1 << 12),  8 * (1 << 20)},
 	{1,  (1 << 14),  8 * (1 << 20)},
 	{1,  (1 << 16),  8 * (1 << 20)},
@@ -451,8 +463,7 @@ bool sim_write_parallel(struct torture_context *tctx,
 	{2,  (1 << 18),  8 * (1 << 20)},
 	{2,  (1 << 20),  8 * (1 << 20)},
 
-	{64,  (1 << 20), 1 * (1 << 30)}*/
-	{2,  (1 << 20),  8 * (1 << 20)},
+	{64,  (1 << 20), 1 * (1 << 30)}
     };
 
     msecs = malloc(sizeof(double) * ARRAY_SIZE(wperf_permutations));
@@ -460,7 +471,8 @@ bool sim_write_parallel(struct torture_context *tctx,
 
     for (int i = 0; i < ARRAY_SIZE(wperf_permutations); i++)
     {
-	ret &= run_write_parallel(tctx, tree,
+	ret &= run_write_parallel(tctx, tree, "parallel_write_",
+			"sim_parallel_write",
 			wperf_permutations[i].nworkers,
 			wperf_permutations[i].wsize,
 			wperf_permutations[i].fsize,
@@ -471,10 +483,202 @@ bool sim_write_parallel(struct torture_context *tctx,
     }
     for (int i = 0; i < ARRAY_SIZE(wperf_permutations); i++)
     {
-    	torture_comment(tctx, "{{%3d:%3ldk:%3ldM}} = %12f MB/s\n",
+    	torture_comment(tctx, "{{%4d:%4ldk:%4ldM}} = %12f MB/s\n",
 		wperf_permutations[i].nworkers,
 		wperf_permutations[i].wsize / (1 << 10),
 		wperf_permutations[i].fsize / (1 << 20),
+		msecs[i]);
+    }
+
+    free(msecs);
+    return ret;
+}
+
+// Simulate parallel reads
+// Dependent on running the write call first
+bool run_read_parallel(struct torture_context *tctx, 
+        struct smb2_tree *tree,
+	char *fname,
+	char *dname,
+        int max_jobs,
+	double *msec_out)
+{
+    bool        result = true;
+    bool        ret = true;
+    int         i = 0;
+    int         num_child = 0;
+    int         child_status = 0;
+    double      t0, t1;
+    double	fakemsec;
+
+    offset_t        off;
+    struct timespec ts;
+    tthrd_ctx       thrd_data;
+    pid_t           pid;
+    NTSTATUS        status;
+    struct smb2_handle hdir;
+    struct smb2_create io;
+    struct smb2_close cio;
+    struct smb2_read rd;
+
+
+
+    status = torture_smb2_testdir(tree, dname, &hdir);
+    torture_assert_ntstatus_ok(tctx, status, "Error creating directory");
+
+    torture_comment(tctx, "Simulated Parallel Reads.\n"
+                          "%d jobs", max_jobs);
+
+    // First we have to create the files to be read!  Call the
+    // run_write_parallel function to do this
+    ret &= run_write_parallel(tctx, tree, fname,
+		    dname,
+		    64, (1 << 20), (1 << 30), &fakemsec);
+
+    if (!ret)
+	return ret;
+
+    /*
+     * Fork a bunch of processes
+     */
+    for (i = 0; i < max_jobs && result == true; i++)
+    {
+        if ((pid = fork())== 0)
+        {
+            int exit_code = 0;
+
+	    char *buf;
+	    char time_filename[MAX_WRITE];
+
+            thrd_data.tt_id = i;
+            thrd_data.tt_pid = getpid();
+            thrd_data.tt_tctx = tctx;
+            thrd_data.tt_memctx = talloc_new(tctx);
+
+            torture_comment(tctx, "%d:%d connecting\n", 
+                thrd_data.tt_id, thrd_data.tt_pid);
+
+            if (!torture_smb2_connection(thrd_data.tt_tctx, &thrd_data.tt_tree))
+            {
+                torture_comment(tctx, "%d:%d failed to connect", 
+                    thrd_data.tt_id, thrd_data.tt_pid);
+
+                exit(EINVAL);
+            }
+
+            sprintf(thrd_data.tt_fname, "%s\\%s%d", dname, fname, i);
+	    sprintf(time_filename, "/tmp/p_r_time_%d", i);
+            sprintf(buf, "parallel_read_payload_%d\n", i);
+
+	    ZERO_STRUCT(io);
+	    io.in.oplock_level = 0;
+	    io.in.desired_access = SEC_RIGHTS_FILE_ALL;
+	    io.in.file_attributes = FILE_ATTRIBUTE_NORMAL;
+	    io.in.create_disposition = NTCREATEX_DISP_OPEN_IF;
+	    io.in.share_access = 
+		    NTCREATEX_SHARE_ACCESS_DELETE|
+		    NTCREATEX_SHARE_ACCESS_READ|
+		    NTCREATEX_SHARE_ACCESS_WRITE;
+	    io.in.create_options = NTCREATEX_OPTIONS_WRITE_THROUGH;
+	    io.in.fname = thrd_data.tt_fname;
+
+            smb2_util_unlink(thrd_data.tt_tree, thrd_data.tt_fname);
+
+            smb2_logoff(thrd_data.tt_tree->session);
+            talloc_free(thrd_data.tt_memctx);
+            torture_comment(tctx, "%d:%d >>> %12f MB/s\n", thrd_data.tt_id,
+                    thrd_data.tt_pid, thrd_data.tt_msec);
+	    FILE* fp = fopen(time_filename, "w");
+	    if(fp) {
+		fprintf(fp, "%lf", thrd_data.tt_msec);
+	    }
+	    fclose(fp);
+	    free(buf);
+
+            exit(exit_code);
+        }
+
+        if(pid == -1)
+        {
+            torture_comment(tctx, "fork %d failed\n", i);
+        }
+        else
+        {
+            num_child++;
+        }
+    }
+
+    while (num_child && result == true)
+    {
+        child_status = 0;
+
+        if ((pid = waitpid(-1, &child_status, 0)) == -1)
+        {
+            torture_comment(tctx, "waitpid() failed, errno %d\n", errno);
+            result = false;
+        }
+        else
+        {
+            torture_comment(tctx, "child %d done, status %d\n",
+                    pid, WEXITSTATUS(child_status));
+            num_child--;
+        }
+    }
+
+    double total_msec = 0.0;
+    char agg_file[MAX_WRITE];
+    FILE* pFile;
+    for(int j = 0; j < max_jobs; j++) {
+	double msec_tmp = 0.0;
+	sprintf(agg_file, "/tmp/p_r_time_%d", j);
+	pFile = fopen(agg_file, "r");
+	if (pFile == NULL) {
+	    torture_comment(tctx, "Problem aggregating data\n");
+	    continue;
+	}
+	fscanf(pFile, "%lf", &msec_tmp);
+	total_msec += msec_tmp;
+	fclose(pFile);
+    }
+    *msec_out = total_msec;
+
+done:
+
+    return result;
+}
+
+// Simulate parallel readers
+bool sim_read_parallel(struct torture_context *tctx,
+	struct smb2_tree *tree)
+{
+    bool ret = true;
+    double* msecs;
+
+    struct r_params {
+	int nworkers;
+    } rperf_permutations[] = {
+	{1},
+	{2},
+	{64}
+    };
+
+    msecs = malloc(sizeof(double) * ARRAY_SIZE(rperf_permutations));
+    memset(msecs, 0, sizeof(double) * ARRAY_SIZE(msecs));
+
+    for (int i = 0; i < ARRAY_SIZE(rperf_permutations); i++)
+    {
+	ret &= run_read_parallel(tctx, tree, "parallel_read_",
+			"sim_parallel_read",
+			rperf_permutations[i].nworkers,
+			&msecs[i]);
+	if (!ret) {
+	    break;
+	}
+    }
+    for (int i = 0; i < ARRAY_SIZE(rperf_permutations); i++)
+    {
+    	torture_comment(tctx, "{{%4d::}} = %12f MB/s\n",
+		rperf_permutations[i].nworkers,
 		msecs[i]);
     }
 
@@ -491,6 +695,7 @@ struct torture_suite *torture_smb2_spectra_init(void)
     torture_suite_add_1smb2_test(suite, "credit_exhaust_64", test_credit_exhaust_64);
     torture_suite_add_1smb2_test(suite, "credit_exhaust_128", test_credit_exhaust_128);
     torture_suite_add_1smb2_test(suite, "sim_write_parallel", sim_write_parallel);
+    //torture_suite_add_1smb2_test(suite, "sim_read_parallel", sim_read_parallel);
 
     suite->description = talloc_strdup(suite, "Spectra logic likewise tests");
     return suite;

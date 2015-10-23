@@ -680,7 +680,16 @@ static bool test_lease_upgrade3(struct torture_context *tctx,
 
 		ZERO_STRUCT(break_info);
 
+		torture_comment(tctx, "Held1 %s(%x), Held2 %s(%x), "
+		    "attempting upgrade %s(%x), upgraded to %s(%x), "
+		    "fallback %s(%x)\n",
+		    t.held1, smb2_util_lease_state(t.held1), t.held2, smb2_util_lease_state(t.held2),
+		    t.upgrade_to, smb2_util_lease_state(t.upgrade_to), t.upgraded_to,
+		    smb2_util_lease_state(t.upgraded_to), t.autofallback_upgraded_to,
+		    smb2_util_lease_state(t.autofallback_upgraded_to));
+
 		/* grab first lease */
+		torture_comment(tctx, "Grab LEASE1\n");
 		smb2_lease_create(&io, &ls, false, fname, LEASE1, smb2_util_lease_state(t.held1));
 		status = smb2_create(tree, mem_ctx, &io);
 		CHECK_STATUS(status, NT_STATUS_OK);
@@ -689,6 +698,7 @@ static bool test_lease_upgrade3(struct torture_context *tctx,
 		h = io.out.file.handle;
 
 		/* grab second lease */
+		torture_comment(tctx, "Grab LEASE2\n");
 		smb2_lease_create(&io, &ls, false, fname, LEASE2, smb2_util_lease_state(t.held2));
 		status = smb2_create(tree, mem_ctx, &io);
 		CHECK_STATUS(status, NT_STATUS_OK);
@@ -701,6 +711,7 @@ static bool test_lease_upgrade3(struct torture_context *tctx,
 		CHECK_VAL(break_info.failures, 0);
 
 		/* try to upgrade lease1 */
+		torture_comment(tctx, "Upgrade LEASE1\n");
 		smb2_lease_create(&io, &ls, false, fname, LEASE1, smb2_util_lease_state(t.upgrade_to));
 		status = smb2_create(tree, mem_ctx, &io);
 		CHECK_STATUS(status, NT_STATUS_OK);
@@ -2414,6 +2425,180 @@ done:
 	return ret;
 }
 
+static bool test_lease_breakopen(struct torture_context *tctx,
+				  struct smb2_tree *tree)
+{
+	TALLOC_CTX *mem_ctx = talloc_new(tctx);
+	struct smb2_create io1, io2;
+	struct smb2_lease ls, ls2;
+	struct smb2_handle h, h2, h3;
+	struct smb2_request *req = NULL;
+	NTSTATUS status;
+	const char *fname = "lease_breakopen.dat";
+	bool ret = true;
+	int i;
+	uint32_t caps;
+
+	caps = smb2cli_conn_server_capabilities(tree->session->transport->conn);
+	if (!(caps & SMB2_CAP_LEASING)) {
+		torture_skip(tctx, "leases are not supported");
+	}
+
+	smb2_util_unlink(tree, fname);
+
+	tree->session->transport->lease.handler	= torture_lease_handler;
+	tree->session->transport->lease.private_data = tree;
+
+	// Defer acking the lease break
+	ZERO_STRUCT(break_info);
+
+	// Create LEASE1
+	torture_comment(tctx, "LEASE1 create %s(%x)\n", "R", smb2_util_lease_state("R"));
+
+	smb2_lease_create(&io1, &ls, false, fname, LEASE1, smb2_util_lease_state("R"));
+	status = smb2_create(tree, mem_ctx, &io1);
+	CHECK_STATUS(status, NT_STATUS_OK);
+	h = io1.out.file.handle;
+	CHECK_CREATED(&io1, CREATED, FILE_ATTRIBUTE_ARCHIVE);
+	CHECK_LEASE(&io1, "R", true, LEASE1, 0);
+
+	// Contend with LEASE2
+	torture_comment(tctx, "LEASE2 create %s(%x)\n", "RH", smb2_util_lease_state("RH"));
+
+	smb2_lease_create(&io2, &ls2, false, fname, LEASE2, smb2_util_lease_state("RH"));
+	status = smb2_create(tree, mem_ctx, &io2);
+	h2 = io2.out.file.handle;
+	CHECK_CREATED(&io2, EXISTED, FILE_ATTRIBUTE_ARCHIVE);
+	CHECK_LEASE(&io2, "RH", true, LEASE2, 0);
+
+	// Upgrade LEASE1 with the same lease key
+	ZERO_STRUCT(break_info);
+	torture_comment(tctx, "LEASE1 attempt upgrade to %s(%x)\n", "RHW", smb2_util_lease_state("RHW"));
+
+	smb2_lease_create(&io1, &ls, false, fname, LEASE1, smb2_util_lease_state("RHW"));
+	status = smb2_create(tree, mem_ctx, &io1);
+	CHECK_STATUS(status, NT_STATUS_OK);
+	h3 = io1.out.file.handle;
+	CHECK_CREATED(&io1, EXISTED, FILE_ATTRIBUTE_ARCHIVE);
+	CHECK_LEASE(&io1, "RH", true, LEASE1, 0);
+
+done:
+	smb2_util_close(tree, h);
+	smb2_util_close(tree, h2);
+	smb2_util_close(tree, h3);
+
+	smb2_util_unlink(tree, fname);
+
+	talloc_free(mem_ctx);
+
+	return ret;
+}
+
+static bool test_lease_breakopen2(struct torture_context *tctx,
+				  struct smb2_tree *tree)
+{
+	TALLOC_CTX *mem_ctx = talloc_new(tctx);
+	struct smb2_close cio = {};
+	struct smb2_create io1 = {};
+	struct smb2_create io2 = {};
+	struct smb2_create io3 = {};
+	struct smb2_lease ls1 = {};
+	struct smb2_lease ls1t = {};
+	struct smb2_handle h1 = {};
+	struct smb2_handle h2 = {};
+	struct smb2_handle h3 = {};
+	struct smb2_request *req2 = NULL;
+	struct torture_lease_break break_info_tmp = {};
+	struct smb2_lease_break_ack ack = {};
+	const char *fname = "lease_breakopen2.dat";
+	const char *sname1, *sname2;
+	bool ret = true;
+	NTSTATUS status;
+	uint32_t caps;
+
+	caps = smb2cli_conn_server_capabilities(tree->session->transport->conn);
+	if (!(caps & SMB2_CAP_LEASING)) {
+		torture_skip(tctx, "leases are not supported");
+	}
+
+	smb2_util_unlink(tree, fname);
+
+	tree->session->transport->lease.handler	= torture_lease_handler;
+	tree->session->transport->lease.private_data = tree;
+	tree->session->transport->oplock.handler = torture_oplock_handler;
+	tree->session->transport->oplock.private_data = tree;
+
+	sname1 = talloc_asprintf(mem_ctx, "%s:%s", fname, "Stream One");
+	sname2 = talloc_asprintf(mem_ctx, "%s:%s", fname, "Stream Two");
+
+	// Defer acking the lease break
+	ZERO_STRUCT(break_info);
+	break_info.lease_skip_ack = true;
+
+	// Create LEASE1
+	torture_comment(tctx, "LEASE1 create %s(%x)\n", "RW", smb2_util_lease_state("RW"));
+
+	io1.in.fname = sname1;
+	smb2_lease_create(&io1, &ls1, false, fname, LEASE1, smb2_util_lease_state("RW"));
+	status = smb2_create(tree, mem_ctx, &io1);
+	CHECK_STATUS(status, NT_STATUS_OK);
+	h1 = io1.out.file.handle;
+	CHECK_CREATED(&io1, CREATED, FILE_ATTRIBUTE_ARCHIVE);
+	CHECK_LEASE(&io1, "RW", true, LEASE1, 0);
+
+	// Contend with an exclusive oplock, only send because there will be no ack
+	torture_comment(tctx, "OPLOCK create SMB2_OPLOCK_LEVEL_EXCLUSIVE\n");
+
+	smb2_oplock_create(&io2, fname, SMB2_OPLOCK_LEVEL_EXCLUSIVE);
+	io2.in.create_disposition = NTCREATEX_DISP_OVERWRITE;
+	req2 = smb2_create_send(tree, &io2);
+	torture_assert(tctx, req2 != NULL, "smb2_create_send");
+
+	// Check the break info
+	CHECK_BREAK_INFO("RH","",LEASE1);
+	torture_assert(tctx, req2->state == SMB2_REQUEST_RECV, "req2 pending");
+
+	// Close LEASE1
+	ZERO_STRUCT(cio);
+	cio.in.file.handle = h1;
+	cio.in.flags = SMB2_CLOSE_FLAGS_FULL_INFORMATION;
+	status = smb2_close(tree, &cio);
+	CHECK_STATUS(status, NT_STATUS_OK);
+	torture_comment(tctx, "Closed LEASE1, attr: 0x%x\n", cio.out.file_attr);
+
+	// Upgrade LEASE1 with the same lease key
+	break_info_tmp = break_info;
+	ZERO_STRUCT(break_info);
+	torture_comment(tctx, "LEASE1 upgrade to %s(%x), "
+			"but will only get %s(%x)\n", 
+			"RHW", smb2_util_lease_state("RHW"),
+			"RH", smb2_util_lease_state("RH"));
+
+	smb2_lease_create(&io1, &ls1, false, fname, LEASE1, smb2_util_lease_state("RHW"));
+	status = smb2_create(tree, mem_ctx, &io1);
+	CHECK_STATUS(status, NT_STATUS_OK);
+	h3 = io1.out.file.handle;
+	CHECK_CREATED(&io1, EXISTED, FILE_ATTRIBUTE_ARCHIVE);
+	CHECK_LEASE(&io1, "RH", true, LEASE1, SMB2_LEASE_FLAG_BREAK_IN_PROGRESS);
+
+	// Acknowledge the outstand ack from oplock
+	torture_comment(tctx, "OPLOCK acknowledge break\n");
+	status = smb2_create_recv(req2, tctx, &io2);
+	CHECK_STATUS(status, NT_STATUS_OK);
+	h2 = io2.out.file.handle;
+	CHECK_CREATED(&io2, TRUNCATED, FILE_ATTRIBUTE_ARCHIVE);
+	CHECK_VAL(io2.out.oplock_level, SMB2_OPLOCK_LEVEL_NONE);
+
+done:
+	smb2_util_close(tree, h1);
+	smb2_util_close(tree, h2);
+	smb2_util_close(tree, h3);
+
+	smb2_util_unlink(tree, fname);
+	talloc_free(mem_ctx);
+	return ret;
+}
+
 static bool test_lease_v2_breaking3(struct torture_context *tctx,
 				 struct smb2_tree *tree)
 {
@@ -4015,6 +4200,8 @@ struct torture_suite *torture_smb2_lease_init(void)
 	torture_suite_add_1smb2_test(suite, "upgrade2", test_lease_upgrade2);
 	torture_suite_add_1smb2_test(suite, "upgrade3", test_lease_upgrade3);
 	torture_suite_add_1smb2_test(suite, "break", test_lease_break);
+	torture_suite_add_1smb2_test(suite, "breakopen", test_lease_breakopen);
+	torture_suite_add_1smb2_test(suite, "breakopen2", test_lease_breakopen2);
 	torture_suite_add_1smb2_test(suite, "oplock", test_lease_oplock);
 	torture_suite_add_1smb2_test(suite, "multibreak", test_lease_multibreak);
 	torture_suite_add_1smb2_test(suite, "breaking1", test_lease_breaking1);
