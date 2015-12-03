@@ -478,7 +478,11 @@ static bool test_create_blob(struct torture_context *tctx, struct smb2_tree *tre
 	torture_comment(tctx, "Testing timewarp\n");
 	io.in.timewarp = 10000;
 	status = smb2_create(tree, tctx, &io);
-	CHECK_STATUS(status, NT_STATUS_OBJECT_NAME_NOT_FOUND);
+ 	if (!torture_setting_bool(tctx, "likewise", false)) {
+		CHECK_STATUS(status, NT_STATUS_OBJECT_NAME_NOT_FOUND);
+	} else {
+		torture_warning(tctx, "LIKEWISE: timewarp not supported");
+	}
 	io.in.timewarp = 0;
 
 	torture_comment(tctx, "Testing query_on_disk\n");
